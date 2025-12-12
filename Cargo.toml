@@ -1,0 +1,33 @@
+[package]
+name = "wifui"
+version = "0.1.0"
+edition = "2024"
+authors = ["Soham Waghmare"]
+description = "A TUI app for managing your connected wifi and perform a simple speed test."
+license = "MIT"
+repository = "https://github.com/sohamw03/wifui"
+readme = "README.md"
+keywords = ["wifi", "tui","network"]
+categories = ["command-line-utilities"]
+
+[package.metadata.wix]
+upgrade-guid = "909EF4D6-77C0-4A24-8057-A4653D8C28F8"
+path-guid = "AC7009CB-81F9-48A3-A260-9A0AA545BE34"
+license = false
+eula = false
+
+[dependencies]
+color-eyre = "0.6.5"
+crossterm = "0.29.0"
+ratatui = "0.29.0"
+tokio = { version = "1.47.1", features = ["full"] }
+windows = { version = "0.62.2", features = ["Win32_NetworkManagement_WiFi", "Win32_Foundation", "Win32_Security", "Win32_NetworkManagement_Ndis"] }
+
+[[bin]]
+name = "wifui"
+path = "src/main.rs"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
