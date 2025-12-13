@@ -1,7 +1,7 @@
 use crate::{
     app::AppState,
     ui::render,
-    wifi::{connect_with_password, get_saved_profiles, connect_profile, get_wifi_networks, forget_network, get_connected_ssid, disconnect, connect_open},
+    wifi::{connect_with_password, get_saved_profiles, connect_profile, get_wifi_networks, forget_network, get_connected_ssid, disconnect, connect_open, set_auto_connect},
 };
 use color_eyre::eyre::Result;
 use crossterm::event::{self, Event};
@@ -219,6 +219,19 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             }
                             event::KeyCode::Char('r') => {
                                 state.refresh()?;
+                            }
+                            event::KeyCode::Char('a') => {
+                                if let Some(selected) = state.l_state.selected() {
+                                    if let Some(wifi) = state.wifi_list.get(selected).cloned() {
+                                        if wifi.is_saved {
+                                            if let Err(e) = set_auto_connect(&wifi.ssid, !wifi.auto_connect) {
+                                                state.error_message = Some(format!("Failed to update auto-connect: {}", e));
+                                            } else {
+                                                state.refresh()?;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             event::KeyCode::Char('f') => {
                                 if let Some(selected) = state.l_state.selected() {

@@ -1,7 +1,7 @@
 use color_eyre::eyre::{Result, eyre};
 use std::collections::HashMap;
 use windows::{
-    core::{GUID, PCWSTR},
+    core::{GUID, PCWSTR, PWSTR},
     Win32::{
         Foundation::{ERROR_SUCCESS, HANDLE},
         NetworkManagement::WiFi::*,
@@ -17,6 +17,7 @@ pub struct WifiInfo {
     pub encryption: String,
     pub signal: u8,
     pub is_saved: bool,
+    pub auto_connect: bool,
     pub phy_type: String,
     pub channel: u32,
     pub frequency: u32,
@@ -106,6 +107,32 @@ pub fn scan_networks() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn is_profile_auto_connect(handle: HANDLE, guid: &GUID, profile_name: &str) -> bool {
+    unsafe {
+        let profile_name_wide: Vec<u16> = profile_name.encode_utf16().chain(std::iter::once(0)).collect();
+        let p_profile_name = PCWSTR(profile_name_wide.as_ptr());
+        let mut p_profile_xml = PWSTR::null();
+        let mut flags = 0;
+
+        let result = WlanGetProfile(
+            handle,
+            guid,
+            p_profile_name,
+            None,
+            &mut p_profile_xml,
+            Some(&mut flags),
+            None
+        );
+
+        if result == ERROR_SUCCESS.0 && !p_profile_xml.is_null() {
+            let xml = p_profile_xml.to_string().unwrap_or_default();
+            WlanFreeMemory(p_profile_xml.as_ptr() as *mut _);
+            return xml.contains("<connectionMode>auto</connectionMode>");
+        }
+    }
+    false
 }
 
 #[allow(non_upper_case_globals)]
@@ -252,6 +279,10 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
             }.to_string();
 
             let is_saved = (item.dwFlags & WLAN_AVAILABLE_NETWORK_HAS_PROFILE) != 0;
+            let mut auto_connect = false;
+            if is_saved {
+                auto_connect = is_profile_auto_connect(handle, &guid, &ssid);
+            }
 
             let bss_type = match item.dot11BssType {
                 dot11_BSS_type_infrastructure => "Infrastructure",
@@ -289,6 +320,7 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
                 encryption,
                 signal,
                 is_saved,
+                auto_connect,
                 phy_type,
                 channel,
                 frequency,
@@ -519,6 +551,68 @@ pub fn disconnect() -> Result<()> {
 
         if result != ERROR_SUCCESS.0 {
             return Err(eyre!("Failed to disconnect: {}", result));
+        }
+    }
+    Ok(())
+}
+
+pub fn set_auto_connect(ssid: &str, enable: bool) -> Result<()> {
+    let (handle, _) = get_wlan_handle()?;
+    let guid = get_interface_guid(handle)?;
+
+    unsafe {
+        let profile_name_wide: Vec<u16> = ssid.encode_utf16().chain(std::iter::once(0)).collect();
+        let p_profile_name = PCWSTR(profile_name_wide.as_ptr());
+        let mut p_profile_xml = PWSTR::null();
+        let mut flags = 0;
+
+        let result = WlanGetProfile(
+            handle,
+            &guid,
+            p_profile_name,
+            None,
+            &mut p_profile_xml,
+            Some(&mut flags),
+            None
+        );
+
+        if result != ERROR_SUCCESS.0 || p_profile_xml.is_null() {
+             WlanCloseHandle(handle, None);
+             return Err(eyre!("Failed to get profile: {}", result));
+        }
+
+        let xml = p_profile_xml.to_string().unwrap_or_default();
+        WlanFreeMemory(p_profile_xml.as_ptr() as *mut _);
+
+        let new_mode = if enable { "auto" } else { "manual" };
+        let new_xml = if xml.contains("<connectionMode>auto</connectionMode>") {
+            xml.replace("<connectionMode>auto</connectionMode>", &format!("<connectionMode>{}</connectionMode>", new_mode))
+        } else if xml.contains("<connectionMode>manual</connectionMode>") {
+            xml.replace("<connectionMode>manual</connectionMode>", &format!("<connectionMode>{}</connectionMode>", new_mode))
+        } else {
+             WlanCloseHandle(handle, None);
+             return Err(eyre!("Could not find connectionMode in profile XML"));
+        };
+
+        let xml_wide: Vec<u16> = new_xml.encode_utf16().chain(std::iter::once(0)).collect();
+        let p_new_profile_xml = PCWSTR(xml_wide.as_ptr());
+
+        let mut reason_code = 0;
+        let result = WlanSetProfile(
+            handle,
+            &guid,
+            0,
+            p_new_profile_xml,
+            None,
+            true,
+            None,
+            &mut reason_code
+        );
+
+        WlanCloseHandle(handle, None);
+
+        if result != ERROR_SUCCESS.0 {
+            return Err(eyre!("Failed to set profile: {} (Reason: {})", result, reason_code));
         }
     }
     Ok(())

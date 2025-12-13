@@ -18,7 +18,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
     let horizontal_layout = Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Length(60), // Fixed width for the main window
+        Constraint::Length(81),
         Constraint::Fill(1),
     ])
     .split(vertical_layout[1]);
@@ -60,6 +60,11 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
             if w.is_saved {
                 ssid = format!("{} 󰆓", ssid); // nf-md-content_save
+                if w.auto_connect {
+                    ssid = format!("{} 󰁪", ssid);
+                } else {
+                    ssid = format!("{} 󱧧", ssid);
+                }
             }
 
             ListItem::new(ssid).style(style)
@@ -120,6 +125,13 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 ]),
             ];
 
+            if wifi.is_saved {
+                info.push(Line::from(vec![
+                    Span::styled("Auto-Connect: ", Style::default().fg(Color::Cyan)),
+                    Span::raw(if wifi.auto_connect { "Yes 󰁪" } else { "No 󱧧" }),
+                ]));
+            }
+
             if let Some(speed) = wifi.link_speed {
                 info.push(Line::from(vec![
                     Span::styled("Link Speed: ", Style::default().fg(Color::Cyan)),
@@ -141,7 +153,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         }
     }
 
-    let help_text = "esc/q: quit | j/k: navigate | enter: connect | f: forget | r: refresh";
+    let help_text = "q: quit | j/k: nav | enter: connect | f: forget | r: refresh | a: auto-conn";
     let help_paragraph = Paragraph::new(help_text)
         .style(Style::default().fg(Color::DarkGray))
         .alignment(Alignment::Center);
