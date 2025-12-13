@@ -1,4 +1,5 @@
 use color_eyre::eyre::{Result, eyre};
+use std::collections::HashMap;
 use windows::{
     core::{GUID, PCWSTR},
     Win32::{
@@ -112,7 +113,7 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
     let (handle, _) = get_wlan_handle()?;
     let guid = get_interface_guid(handle)?;
 
-    let mut wifi_list = Vec::new();
+    let mut wifi_list: Vec<WifiInfo>;
 
     unsafe {
         let mut available_network_list: *mut WLAN_AVAILABLE_NETWORK_LIST = std::ptr::null_mut();
@@ -183,6 +184,8 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
             (*available_network_list).Network.as_ptr(),
             num_items as usize
         );
+
+        let mut wifi_map: HashMap<(String, String), WifiInfo> = HashMap::new();
 
         for item in items {
             let ssid_len = item.dot11Ssid.uSSIDLength as usize;
@@ -279,10 +282,10 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
 
             let signal = item.wlanSignalQuality as u8;
 
-            wifi_list.push(WifiInfo {
-                ssid,
+            let new_info = WifiInfo {
+                ssid: ssid.clone(),
                 network_type: bss_type,
-                authentication,
+                authentication: authentication.clone(),
                 encryption,
                 signal,
                 is_saved,
@@ -290,8 +293,17 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
                 channel,
                 frequency,
                 link_speed,
-            });
+            };
+
+            wifi_map.entry((ssid, authentication))
+                .and_modify(|info| {
+                    if new_info.is_saved { info.is_saved = true; }
+                    if new_info.signal > info.signal { info.signal = new_info.signal; }
+                })
+                .or_insert(new_info);
         }
+
+        wifi_list = wifi_map.into_values().collect();
 
         if !bss_list.is_null() {
             WlanFreeMemory(bss_list as *mut _);
@@ -302,9 +314,6 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
 
     // Sort by signal strength descending
     wifi_list.sort_by(|a, b| b.signal.cmp(&a.signal));
-
-    // Dedup logic
-    wifi_list.dedup_by(|a, b| a.ssid == b.ssid);
 
     Ok(wifi_list)
 }
