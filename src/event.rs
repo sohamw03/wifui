@@ -1,7 +1,7 @@
 use crate::{
     app::AppState,
     ui::render,
-    wifi::{connect_with_password, get_saved_profiles, connect_profile, get_wifi_networks, forget_network, get_connected_ssid, disconnect, connect_open, set_auto_connect},
+    wifi::{connect_with_password, get_saved_profiles, connect_profile, get_wifi_networks, forget_network, get_connected_ssid, disconnect, connect_open, set_auto_connect, scan_networks},
 };
 use color_eyre::eyre::Result;
 use crossterm::event::{self, Event};
@@ -14,8 +14,8 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
         terminal.draw(|frame| render(frame, state))?;
 
         // Check for connection result
-        if let Some(rx) = &mut state.connection_result_rx {
-            if let Ok(result) = rx.try_recv() {
+        if let Some(rx) = &mut state.connection_result_rx
+            && let Ok(result) = rx.try_recv() {
                 state.connection_result_rx = None;
                 if let Err(e) = result {
                     state.is_connecting = false;
@@ -26,13 +26,23 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                     // Connection initiated successfully, now wait for it to actually connect
                     state.refresh_burst = 15; // Increase burst to check status frequently
                 }
-                state.refresh()?;
+                // Trigger background refresh instead of blocking
+                state.is_refreshing_networks = true;
+                let (tx, rx) = mpsc::channel(1);
+                state.network_update_rx = Some(rx);
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(|| {
+                        let networks = get_wifi_networks()?;
+                        let connected = get_connected_ssid()?;
+                        Ok((networks, connected))
+                    }).await.unwrap();
+                    let _ = tx.send(result).await;
+                });
             }
-        }
 
         // Check for network updates
-        if let Some(rx) = &mut state.network_update_rx {
-            if let Ok(result) = rx.try_recv() {
+        if let Some(rx) = &mut state.network_update_rx
+            && let Ok(result) = rx.try_recv() {
                 if let Ok((new_list, connected_ssid)) = result {
                     // Try to preserve selection
                     let selected_ssid = state.l_state.selected().and_then(|i| state.wifi_list.get(i)).map(|w| w.ssid.clone());
@@ -52,30 +62,27 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                 state.network_update_rx = None;
                 state.last_refresh = Instant::now();
             }
-        }
 
         // Check if connected to target SSID
         if state.is_connecting {
             state.loading_frame = state.loading_frame.wrapping_add(1);
 
             if let Some(target) = &state.target_ssid {
-                if let Some(connected) = &state.connected_ssid {
-                    if connected == target {
+                if let Some(connected) = &state.connected_ssid
+                    && connected == target {
                         state.is_connecting = false;
                         state.target_ssid = None;
                         state.connection_start_time = None;
                     }
-                }
 
                 // Check for timeout (e.g. 20 seconds)
-                if let Some(start_time) = state.connection_start_time {
-                    if start_time.elapsed() > Duration::from_secs(20) {
+                if let Some(start_time) = state.connection_start_time
+                    && start_time.elapsed() > Duration::from_secs(20) {
                         state.is_connecting = false;
                         state.target_ssid = None;
                         state.connection_start_time = None;
                         state.error_message = Some("Connection timed out".to_string());
                     }
-                }
             } else {
                 // If no target SSID is set but is_connecting is true, it might be a disconnect or forget operation
                 // In those cases we should probably just turn off is_connecting when the operation completes
@@ -134,11 +141,19 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                     let (tx, rx) = mpsc::channel(1);
                                     state.connection_result_rx = Some(rx);
 
+                                    let wifi_info = state.wifi_list.iter().find(|w| w.ssid == ssid).cloned();
+
                                     tokio::spawn(async move {
                                         if get_connected_ssid().unwrap_or(None).is_some() {
-                                            let _ = disconnect();
+                                            let _ = tokio::task::spawn_blocking(disconnect).await;
                                         }
-                                        let result = connect_with_password(&ssid, &password);
+                                        let result = tokio::task::spawn_blocking(move || {
+                                            if let Some(info) = wifi_info {
+                                                connect_with_password(&ssid, &password, &info.authentication, &info.encryption)
+                                            } else {
+                                                connect_with_password(&ssid, &password, "WPA2-PSK", "AES")
+                                            }
+                                        }).await.unwrap();
                                         let _ = tx.send(result).await;
                                     });
                                 }
@@ -164,8 +179,8 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             event::KeyCode::Char('j') | event::KeyCode::Down => state.next(),
                             event::KeyCode::Char('k') | event::KeyCode::Up => state.previous(),
                             event::KeyCode::Enter => {
-                                if let Some(selected) = state.l_state.selected() {
-                                    if let Some(wifi) = state.wifi_list.get(selected).cloned() {
+                                if let Some(selected) = state.l_state.selected()
+                                    && let Some(wifi) = state.wifi_list.get(selected).cloned() {
                                         let is_connected = if let Some(connected_ssid) = &state.connected_ssid {
                                             wifi.ssid == *connected_ssid
                                         } else {
@@ -173,9 +188,12 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                         };
 
                                         if is_connected {
-                                            disconnect()?;
-                                            state.refresh()?;
-                                            state.refresh_burst = 5;
+                                            let (tx, rx) = mpsc::channel(1);
+                                            state.connection_result_rx = Some(rx);
+                                            tokio::spawn(async move {
+                                                let result = tokio::task::spawn_blocking(disconnect).await.unwrap();
+                                                let _ = tx.send(result).await;
+                                            });
                                         } else if wifi.authentication != "Open" {
                                             // Check if profile exists
                                             let saved_profiles = get_saved_profiles().unwrap_or_default();
@@ -189,9 +207,9 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
 
                                                 tokio::spawn(async move {
                                                     if get_connected_ssid().unwrap_or(None).is_some() {
-                                                        let _ = disconnect();
+                                                        let _ = tokio::task::spawn_blocking(disconnect).await;
                                                     }
-                                                    let result = connect_profile(&ssid);
+                                                    let result = tokio::task::spawn_blocking(move || connect_profile(&ssid)).await.unwrap();
                                                     let _ = tx.send(result).await;
                                                 });
                                             } else {
@@ -208,41 +226,61 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
 
                                             tokio::spawn(async move {
                                                 if get_connected_ssid().unwrap_or(None).is_some() {
-                                                    let _ = disconnect();
+                                                    let _ = tokio::task::spawn_blocking(disconnect).await;
                                                 }
-                                                let result = connect_open(&ssid);
+                                                let result = tokio::task::spawn_blocking(move || connect_open(&ssid)).await.unwrap();
                                                 let _ = tx.send(result).await;
                                             });
                                         }
                                     }
-                                }
                             }
                             event::KeyCode::Char('r') => {
-                                state.refresh()?;
+                                state.is_refreshing_networks = true;
+                                let (tx, rx) = mpsc::channel(1);
+                                state.network_update_rx = Some(rx);
+
+                                tokio::spawn(async move {
+                                    let result = tokio::task::spawn_blocking(|| {
+                                        let _ = scan_networks();
+                                        std::thread::sleep(Duration::from_secs(2));
+                                        let networks = get_wifi_networks()?;
+                                        let connected = get_connected_ssid()?;
+                                        Ok((networks, connected))
+                                    }).await.unwrap();
+                                    let _ = tx.send(result).await;
+                                });
                             }
                             event::KeyCode::Char('a') => {
-                                if let Some(selected) = state.l_state.selected() {
-                                    if let Some(wifi) = state.wifi_list.get(selected).cloned() {
-                                        if wifi.is_saved {
-                                            if let Err(e) = set_auto_connect(&wifi.ssid, !wifi.auto_connect) {
-                                                state.error_message = Some(format!("Failed to update auto-connect: {}", e));
-                                            } else {
-                                                state.refresh()?;
-                                            }
+                                if let Some(selected) = state.l_state.selected()
+                                    && let Some(wifi) = state.wifi_list.get(selected).cloned()
+                                        && wifi.is_saved {
+                                            let ssid = wifi.ssid.clone();
+                                            let auto_connect = !wifi.auto_connect;
+                                            let (tx, rx) = mpsc::channel(1);
+                                            state.connection_result_rx = Some(rx);
+
+                                            tokio::spawn(async move {
+                                                let result = tokio::task::spawn_blocking(move || {
+                                                    set_auto_connect(&ssid, auto_connect)
+                                                }).await.unwrap();
+                                                let _ = tx.send(result).await;
+                                            });
                                         }
-                                    }
-                                }
                             }
                             event::KeyCode::Char('f') => {
-                                if let Some(selected) = state.l_state.selected() {
-                                    if let Some(wifi) = state.wifi_list.get(selected).cloned() {
-                                        if let Err(e) = forget_network(&wifi.ssid) {
-                                            state.error_message = Some(format!("Failed to forget network: {}", e));
-                                        } else {
-                                            state.refresh()?;
-                                        }
+                                if let Some(selected) = state.l_state.selected()
+                                    && let Some(wifi) = state.wifi_list.get(selected).cloned() {
+                                        let ssid = wifi.ssid.clone();
+                                        let (tx, rx) = mpsc::channel(1);
+                                        state.connection_result_rx = Some(rx);
+
+                                        tokio::spawn(async move {
+                                            let result = tokio::task::spawn_blocking(move || {
+                                                forget_network(&ssid)
+                                            }).await.unwrap();
+                                            let _ = tx.send(result).await;
+                                        });
                                     }
-                                }
                             }
                             _ => {}
                         }

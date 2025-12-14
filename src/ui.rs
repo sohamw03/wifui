@@ -51,12 +51,11 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             let mut ssid = w.ssid.clone();
             let mut style = Style::default();
 
-            if let Some(connected_ssid) = &state.connected_ssid {
-                if w.ssid == *connected_ssid {
+            if let Some(connected_ssid) = &state.connected_ssid
+                && w.ssid == *connected_ssid {
                     ssid = format!("{} 󰖩", ssid); // nf-md-wifi_check
                     style = style.fg(Color::Green).add_modifier(Modifier::BOLD);
                 }
-            }
 
             if w.is_saved {
                 ssid = format!("{} 󰆓", ssid); // nf-md-content_save
@@ -89,8 +88,8 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
     frame.render_stateful_widget(list, content_layout[0], &mut state.l_state);
 
-    if let Some(selected) = state.l_state.selected() {
-        if let Some(wifi) = state.wifi_list.get(selected) {
+    if let Some(selected) = state.l_state.selected()
+        && let Some(wifi) = state.wifi_list.get(selected) {
             let mut info = vec![
                 Line::from(vec![
                     Span::styled("SSID: ", Style::default().fg(Color::Cyan)),
@@ -151,7 +150,6 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 );
             frame.render_widget(paragraph, content_layout[1]);
         }
-    }
 
     let help_text = "q: quit | j/k: nav | enter: connect | f: forget | r: refresh | a: auto-conn";
     let help_paragraph = Paragraph::new(help_text)

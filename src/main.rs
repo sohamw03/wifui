@@ -5,7 +5,6 @@ mod wifi;
 
 use color_eyre::eyre::Result;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use ratatui;
 
 use crate::{app::AppState, event::run, wifi::{get_wifi_networks, scan_networks}};
 

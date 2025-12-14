@@ -1,4 +1,4 @@
-use crate::wifi::{get_connected_ssid, get_wifi_networks, WifiInfo};
+use crate::wifi::{get_connected_ssid, WifiInfo};
 use color_eyre::eyre::Result;
 use ratatui::widgets::ListState;
 use std::time::{Duration, Instant};
@@ -46,12 +46,6 @@ impl AppState {
             target_ssid: None,
             connection_start_time: None,
         }
-    }
-
-    pub fn refresh(&mut self) -> Result<()> {
-        self.wifi_list = get_wifi_networks()?;
-        self.connected_ssid = get_connected_ssid()?;
-        Ok(())
     }
 
     pub fn next(&mut self) {

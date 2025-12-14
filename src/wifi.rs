@@ -11,7 +11,6 @@ use windows::{
 #[derive(Debug, Default, Clone)]
 pub struct WifiInfo {
     pub ssid: String,
-    #[allow(dead_code)]
     pub network_type: String,
     pub authentication: String,
     pub encryption: String,
@@ -232,11 +231,11 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
 
             let (frequency, channel) = if let Some(bss) = best_bss {
                 let freq = bss.ulChCenterFrequency;
-                let ch = if freq >= 2412000 && freq <= 2484000 {
+                let ch = if (2412000..=2484000).contains(&freq) {
                     if freq == 2484000 { 14 } else { (freq - 2407000) / 5000 }
-                } else if freq >= 5000000 && freq <= 5900000 {
+                } else if (5000000..=5900000).contains(&freq) {
                     (freq - 5000000) / 5000
-                } else if freq >= 5925000 && freq <= 7125000 {
+                } else if (5925000..=7125000).contains(&freq) {
                     (freq - 5950000) / 5000
                 } else {
                     0
@@ -248,11 +247,10 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
             };
 
             let mut link_speed = None;
-            if let Some((ref conn_ssid, conn_rate)) = current_connection {
-                if *conn_ssid == ssid {
+            if let Some((ref conn_ssid, conn_rate)) = current_connection
+                && *conn_ssid == ssid {
                     link_speed = Some(conn_rate / 1000); // Kbps to Mbps
                 }
-            }
 
             let authentication = match item.dot11DefaultAuthAlgorithm {
                 DOT11_AUTH_ALGO_80211_OPEN => "Open",
@@ -383,6 +381,14 @@ pub fn get_saved_profiles() -> Result<Vec<String>> {
     Ok(profiles)
 }
 
+fn escape_xml(s: &str) -> String {
+    s.replace("&", "&amp;")
+     .replace("<", "&lt;")
+     .replace(">", "&gt;")
+     .replace("\"", "&quot;")
+     .replace("'", "&apos;")
+}
+
 pub fn connect_profile(ssid: &str) -> Result<()> {
     let (handle, _) = get_wlan_handle()?;
     let guid = get_interface_guid(handle)?;
@@ -410,7 +416,23 @@ pub fn connect_profile(ssid: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn connect_with_password(ssid: &str, password: &str) -> Result<()> {
+pub fn connect_with_password(ssid: &str, password: &str, auth: &str, cipher: &str) -> Result<()> {
+    let ssid_escaped = escape_xml(ssid);
+    let password_escaped = escape_xml(password);
+
+    let (xml_auth, xml_cipher) = match auth {
+        "WPA3-SAE" => ("WPA3SAE", "AES"),
+        "WPA3" => ("WPA3", "AES"),
+        "WPA2-PSK" => ("WPA2PSK", "AES"),
+        "WPA2" => ("WPA2", "AES"),
+        "WPA-PSK" => ("WPAPSK", if cipher == "AES" { "AES" } else { "TKIP" }),
+        "WPA" => ("WPA", if cipher == "AES" { "AES" } else { "TKIP" }),
+        "Shared" => ("shared", "WEP"),
+        _ => ("WPA2PSK", "AES"),
+    };
+
+    let final_cipher = if cipher == "GCMP" { "GCMP" } else { xml_cipher };
+
     let profile_xml = format!(
         r#"<?xml version="1.0"?>
 <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
@@ -425,8 +447,8 @@ pub fn connect_with_password(ssid: &str, password: &str) -> Result<()> {
     <MSM>
         <security>
             <authEncryption>
-                <authentication>WPA2PSK</authentication>
-                <encryption>AES</encryption>
+                <authentication>{}</authentication>
+                <encryption>{}</encryption>
                 <useOneX>false</useOneX>
             </authEncryption>
             <sharedKey>
@@ -437,7 +459,7 @@ pub fn connect_with_password(ssid: &str, password: &str) -> Result<()> {
         </security>
     </MSM>
 </WLANProfile>"#,
-        ssid, ssid, password
+        ssid_escaped, ssid_escaped, xml_auth, final_cipher, password_escaped
     );
 
     let (handle, _) = get_wlan_handle()?;
@@ -470,6 +492,7 @@ pub fn connect_with_password(ssid: &str, password: &str) -> Result<()> {
 }
 
 pub fn connect_open(ssid: &str) -> Result<()> {
+    let ssid_escaped = escape_xml(ssid);
     let profile_xml = format!(
         r#"<?xml version="1.0"?>
 <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
@@ -491,7 +514,7 @@ pub fn connect_open(ssid: &str) -> Result<()> {
         </security>
     </MSM>
 </WLANProfile>"#,
-        ssid, ssid
+        ssid_escaped, ssid_escaped
     );
 
     let (handle, _) = get_wlan_handle()?;
