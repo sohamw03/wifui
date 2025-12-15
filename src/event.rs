@@ -160,6 +160,10 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 state.show_password_popup = false;
                                 state.password_input.clear();
                             }
+                            event::KeyCode::Char('[') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                                state.show_password_popup = false;
+                                state.password_input.clear();
+                            }
                             event::KeyCode::Char(c) => {
                                 state.password_input.push(c);
                             }
