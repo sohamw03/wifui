@@ -9,8 +9,8 @@
 ## 🚀 Features
 
 - **Network Scanning**: Instantly discover available Wi-Fi networks.
-- **Seamless Connection**: Connect to open or WPA2-PSK secured networks.
-- **Network Management**: View detailed network info (SSID, BSSID, Signal Strength).
+- **Seamless Connection**: Connect to open or secured networks.
+- **Network Management**: View detailed network info (SSID, Signal Strength, Security Type, Channel).
 - **Keyboard Driven**: Efficient navigation with Vim-like keybindings.
 
 ## 📸 Screenshots
@@ -49,11 +49,12 @@ wifui
 
 | Key | Action |
 | :--- | :--- |
-| `↑` / `k` | Move selection up |
-| `↓` / `j` | Move selection down |
+| `↑` / `k` | Move Selection Up |
+| `↓` / `j` | Move Selection Down |
 | `Enter` | Connect / Disconnect |
-| `r` | Refresh network list |
-| `f` | Forget network |
+| `r` | Refresh Network List |
+| `f` | Forget Network |
+| `a` | Toggle Auto Connect |
 | `q` / `Esc` | Quit |
 
 ## 🤝 Contributing
