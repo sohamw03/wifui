@@ -1,6 +1,6 @@
 [package]
 name = "wifui"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Soham Waghmare"]
 description = "A TUI app for managing your connected wifi and perform a simple speed test."
