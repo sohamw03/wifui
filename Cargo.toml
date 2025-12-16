@@ -3,11 +3,11 @@ name = "wifui"
 version = "0.1.1"
 edition = "2024"
 authors = ["Soham Waghmare"]
-description = "A TUI app for managing your connected wifi and perform a simple speed test."
+description = "A lightweight, keyboard-driven Terminal User Interface (TUI) for managing Wi-Fi connections on Windows."
 license = "MIT"
 repository = "https://github.com/sohamw03/wifui"
 readme = "README.md"
-keywords = ["wifi", "tui","network"]
+keywords = ["wifui", "cli", "network-manager", "ratatui", "windows"]
 categories = ["command-line-utilities"]
 
 [package.metadata.wix]

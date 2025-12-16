@@ -1,10 +1,14 @@
-<!-- ![WifUIBanner](Banner Placeholder) -->
+![WifUIBanner](images/Animation.gif)
 
 # WifUI
 
 [![Downloads](https://img.shields.io/github/downloads/sohamw03/wifui/total)](https://github.com/sohamw03/wifui/releases)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/sohamw03/wifui/release.yml)
+![WinGet Package Version](https://img.shields.io/winget/v/sohamw03.wifui)
+![Crates.io Version](https://img.shields.io/crates/v/wifui)
+![GitHub Repo stars](https://img.shields.io/github/stars/sohamw03/wifui)
 
-**WifUI** is a blazing fast, lightweight Terminal User Interface (TUI) for managing Wi-Fi connections on Windows. Built with Rust and `ratatui`, it offers a keyboard-centric way to scan, connect, and monitor your network status without leaving the terminal.
+**WifUI** is a blazing fast, lightweight Terminal User Interface (TUI) for managing Wi-Fi connections on **Windows**. Built with Rust and `ratatui`, it offers a keyboard-centric way to scan, connect, and monitor your network status without leaving the terminal.
 
 ## 🚀 Features
 
@@ -25,6 +29,12 @@
 
 ```sh
 winget install wifui
+```
+
+### Crates.io
+
+```sh
+cargo install wifui
 ```
 
 ### From Source
