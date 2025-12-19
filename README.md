@@ -26,7 +26,7 @@
 
 ## 📦 Installation
 
-### Winget (Coming Soon)
+### Winget
 
 ```sh
 winget install wifui
