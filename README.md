@@ -31,6 +31,13 @@
 winget install wifui
 ```
 
+### Scoop
+
+```sh
+scoop bucket add sohamw03 https://github.com/sohamw03/Scoop-Bucket
+scoop install wifui
+```
+
 ### Crates.io
 
 ```sh
