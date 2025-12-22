@@ -132,6 +132,41 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
             if let Event::Key(key) = event::read()? {
                 state.last_interaction = Instant::now();
                 if key.kind == event::KeyEventKind::Press {
+                    // Log key press if enabled
+                    if state.show_key_logger {
+                        let mut key_str = String::new();
+                        if key.modifiers.contains(event::KeyModifiers::CONTROL) {
+                            key_str.push_str("Ctrl+");
+                        }
+                        if key.modifiers.contains(event::KeyModifiers::ALT) {
+                            key_str.push_str("Alt+");
+                        }
+                        if key.modifiers.contains(event::KeyModifiers::SHIFT) && !matches!(key.code, event::KeyCode::Char(_)) {
+                            key_str.push_str("Shift+");
+                        }
+
+                        let code_str = match key.code {
+                            event::KeyCode::Char(c) => c.to_string(),
+                            event::KeyCode::Enter => "Enter".to_string(),
+                            event::KeyCode::Backspace => "Backspace".to_string(),
+                            event::KeyCode::Left => "Left".to_string(),
+                            event::KeyCode::Right => "Right".to_string(),
+                            event::KeyCode::Up => "Up".to_string(),
+                            event::KeyCode::Down => "Down".to_string(),
+                            event::KeyCode::Tab => "Tab".to_string(),
+                            event::KeyCode::Delete => "Delete".to_string(),
+                            event::KeyCode::Home => "Home".to_string(),
+                            event::KeyCode::End => "End".to_string(),
+                            event::KeyCode::PageUp => "PageUp".to_string(),
+                            event::KeyCode::PageDown => "PageDown".to_string(),
+                            event::KeyCode::Esc => "Esc".to_string(),
+                            event::KeyCode::F(n) => format!("F{}", n),
+                            _ => format!("{:?}", key.code),
+                        };
+                        key_str.push_str(&code_str);
+                        state.last_key_press = Some((key_str, Instant::now()));
+                    }
+
                     // Clear error message on any key press
                     if state.error_message.is_some() {
                         state.error_message = None;
@@ -254,6 +289,9 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             }
                             event::KeyCode::Enter => {
                                 state.is_searching = false;
+                                if !state.filtered_wifi_list.is_empty() {
+                                    state.l_state.select(Some(0));
+                                }
                             }
                             event::KeyCode::Char(c) => {
                                 let byte_idx = state.search_input.chars().take(state.search_cursor).map(|c| c.len_utf8()).sum();

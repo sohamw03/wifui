@@ -329,4 +329,35 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         frame.render_widget(Clear, popup_area);
         frame.render_widget(popup, popup_area);
     }
+
+    if state.show_key_logger {
+        if let Some((key, time)) = &state.last_key_press {
+            if time.elapsed() < std::time::Duration::from_secs(2) {
+                let key_text = format!(" {} ", key);
+                let width = key_text.len() as u16 + 2;
+
+                // Position right below the bottom right of the main UI
+                let key_area = Rect::new(
+                    main_area.x + main_area.width - width,
+                    main_area.y + main_area.height,
+                    width,
+                    3
+                );
+
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(theme::BRIGHT_PURPLE))
+                    .style(Style::default().bg(theme::BACKGROUND));
+
+                let paragraph = Paragraph::new(key_text)
+                    .block(block)
+                    .style(Style::default().fg(theme::BRIGHT_PURPLE).add_modifier(Modifier::BOLD))
+                    .alignment(Alignment::Center);
+
+                frame.render_widget(Clear, key_area);
+                frame.render_widget(paragraph, key_area);
+            }
+        }
+    }
 }

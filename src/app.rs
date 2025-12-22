@@ -28,10 +28,12 @@ pub struct AppState {
     pub refresh_burst: u8,
     pub target_ssid: Option<String>,
     pub connection_start_time: Option<Instant>,
+    pub show_key_logger: bool,
+    pub last_key_press: Option<(String, Instant)>,
 }
 
 impl AppState {
-    pub fn new(wifi_list: Vec<WifiInfo>) -> AppState {
+    pub fn new(wifi_list: Vec<WifiInfo>, show_key_logger: bool) -> AppState {
         AppState {
             filtered_wifi_list: wifi_list.clone(),
             wifi_list,
@@ -55,6 +57,8 @@ impl AppState {
             refresh_burst: 5, // Burst refresh on startup to catch scan results
             target_ssid: None,
             connection_start_time: None,
+            show_key_logger,
+            last_key_press: None,
         }
     }
 

@@ -16,7 +16,7 @@ pub const BRIGHT_BLACK: Color = Color::Rgb(85, 84, 69); // #555445
 // pub const BRIGHT_GREEN: Color = Color::Rgb(97, 224, 112); // #61E070
 // pub const BRIGHT_YELLOW: Color = Color::Rgb(214, 153, 39); // #D69927
 // pub const BRIGHT_BLUE: Color = Color::Rgb(121, 217, 217); // #79D9D9
-// pub const BRIGHT_PURPLE: Color = Color::Rgb(205, 124, 84); // #CD7C54
+pub const BRIGHT_PURPLE: Color = Color::Rgb(205, 124, 84); // #CD7C54
 // pub const BRIGHT_CYAN: Color = Color::Rgb(89, 213, 153); // #59D599
 // pub const BRIGHT_WHITE: Color = Color::Rgb(255, 241, 233); // #FFF1E9
 
