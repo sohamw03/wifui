@@ -12,17 +12,33 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
     // Set background color for the entire screen
     frame.render_widget(Block::default().style(Style::default().bg(theme::BACKGROUND).fg(theme::FOREGROUND)), area);
 
+    // Calculate dynamic dimensions to ensure perfect centering
+    // Adjust width/height to match the parity of the terminal size
+    let target_height = 32;
+    let height = if area.height % 2 == 0 {
+        if target_height % 2 == 0 { target_height } else { target_height + 1 }
+    } else {
+        if target_height % 2 != 0 { target_height } else { target_height + 1 }
+    };
+
+    let target_width = 77;
+    let width = if area.width % 2 == 0 {
+        if target_width % 2 == 0 { target_width } else { target_width + 1 }
+    } else {
+        if target_width % 2 != 0 { target_width } else { target_width + 1 }
+    };
+
     // Center the main window
     let vertical_layout = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(32), // Fixed height for the main window
+        Constraint::Length(height),
         Constraint::Fill(1),
     ])
     .split(area);
 
     let horizontal_layout = Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Length(77),
+        Constraint::Length(width),
         Constraint::Fill(1),
     ])
     .split(vertical_layout[1]);

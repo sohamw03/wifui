@@ -12,6 +12,12 @@ use crate::{app::AppState, event::run, wifi::{get_wifi_networks, scan_networks}}
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
+
+    if args.contains(&"-v".to_string()) || args.contains(&"--version".to_string()) {
+        println!("wifui {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let show_key_logger = args.contains(&"--show-keys".to_string());
 
     // Trigger a scan on startup to ensure the network list is up-to-date

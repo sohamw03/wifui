@@ -20,9 +20,9 @@
 
 ## 📸 Screenshots
 
-| Home Screen | Password Prompt |
-|:---:|:---:|
-| ![Home Screen](images/main.png) | ![Password Prompt](images/password.png) |
+| Home | Search | Password |
+|:---:|:---:|:---:|
+| ![Home](images/main.png) | ![Search](images/search.png) | ![Password](images/password.png) |
 
 ## 📦 Installation
 
@@ -52,7 +52,7 @@ Ensure you have the [Rust toolchain](https://www.rust-lang.org/tools/install) in
 ```sh
 git clone https://github.com/sohamw03/wifui.git
 cd wifui
-cargo run --release
+cargo install --path .
 ```
 
 ## 🎮 Usage
@@ -73,7 +73,18 @@ wifui
 | `r` | Refresh Network List |
 | `f` | Forget Network |
 | `a` | Toggle Auto Connect |
-| `q` / `Esc` | Quit |
+| `/` | Search Networks |
+| `q` | Quit |
+| `Esc` | Back / Clear Search / Quit |
+
+### Input Navigation (Search & Password)
+
+| Key | Action |
+| :--- | :--- |
+| `Esc` / `Ctrl + [` | Clear Input |
+| `Ctrl / Alt + Backspace` | Delete Word |
+| `Ctrl / Alt + ← / →` | Move Cursor by Word |
+| `Home / End` | Move Cursor to Start / End |
 
 ## 🤝 Contributing
 
