@@ -804,7 +804,7 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wifui"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "color-eyre",
  "crossterm 0.29.0",
