@@ -4,12 +4,18 @@ use crate::{
     wifi::{connect_with_password, get_saved_profiles, connect_profile, get_wifi_networks, forget_network, get_connected_ssid, disconnect, connect_open, set_auto_connect, scan_networks},
 };
 use color_eyre::eyre::Result;
-use crossterm::event::{self, Event};
+use crossterm::{
+    cursor::SetCursorStyle,
+    event::{self, Event},
+};
 use ratatui::DefaultTerminal;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<()> {
+    // Set cursor style to blinking block
+    crossterm::execute!(std::io::stdout(), SetCursorStyle::BlinkingBlock)?;
+
     loop {
         terminal.draw(|frame| render(frame, state))?;
 
@@ -49,9 +55,10 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
 
                     state.wifi_list = new_list;
                     state.connected_ssid = connected_ssid;
+                    state.update_filtered_list();
 
                     if let Some(ssid) = selected_ssid {
-                        if let Some(pos) = state.wifi_list.iter().position(|w| w.ssid == ssid) {
+                        if let Some(pos) = state.filtered_wifi_list.iter().position(|w| w.ssid == ssid) {
                             state.l_state.select(Some(pos));
                         } else {
                             state.l_state.select(Some(0));
@@ -165,10 +172,71 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 state.password_input.clear();
                             }
                             event::KeyCode::Char(c) => {
-                                state.password_input.push(c);
+                                let byte_idx = state.password_input.chars().take(state.password_cursor).map(|c| c.len_utf8()).sum();
+                                state.password_input.insert(byte_idx, c);
+                                state.password_cursor += 1;
+                            }
+                            event::KeyCode::Backspace if key.modifiers.intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) => {
+                                if state.password_cursor > 0 {
+                                    let chars: Vec<char> = state.password_input.chars().collect();
+                                    let mut idx = state.password_cursor;
+                                    while idx > 0 && idx <= chars.len() && chars[idx - 1].is_whitespace() {
+                                        idx -= 1;
+                                    }
+                                    while idx > 0 && !chars[idx - 1].is_whitespace() {
+                                        idx -= 1;
+                                    }
+                                    let start_byte = chars.iter().take(idx).map(|c| c.len_utf8()).sum::<usize>();
+                                    let end_byte = chars.iter().take(state.password_cursor).map(|c| c.len_utf8()).sum::<usize>();
+                                    state.password_input.replace_range(start_byte..end_byte, "");
+                                    state.password_cursor = idx;
+                                }
                             }
                             event::KeyCode::Backspace => {
-                                state.password_input.pop();
+                                if state.password_cursor > 0 {
+                                    let byte_idx = state.password_input.chars().take(state.password_cursor - 1).map(|c| c.len_utf8()).sum();
+                                    state.password_input.remove(byte_idx);
+                                    state.password_cursor -= 1;
+                                }
+                            }
+                            event::KeyCode::Left if key.modifiers.intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) => {
+                                let chars: Vec<char> = state.password_input.chars().collect();
+                                let mut idx = state.password_cursor;
+                                while idx > 0 && idx <= chars.len() && chars[idx - 1].is_whitespace() {
+                                    idx -= 1;
+                                }
+                                while idx > 0 && !chars[idx - 1].is_whitespace() {
+                                    idx -= 1;
+                                }
+                                state.password_cursor = idx;
+                            }
+                            event::KeyCode::Left => {
+                                if state.password_cursor > 0 {
+                                    state.password_cursor -= 1;
+                                }
+                            }
+                            event::KeyCode::Right if key.modifiers.intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) => {
+                                let chars: Vec<char> = state.password_input.chars().collect();
+                                let mut idx = state.password_cursor;
+                                let len = chars.len();
+                                while idx < len && !chars[idx].is_whitespace() {
+                                    idx += 1;
+                                }
+                                while idx < len && chars[idx].is_whitespace() {
+                                    idx += 1;
+                                }
+                                state.password_cursor = idx;
+                            }
+                            event::KeyCode::Right => {
+                                if state.password_cursor < state.password_input.chars().count() {
+                                    state.password_cursor += 1;
+                                }
+                            }
+                            event::KeyCode::Home => {
+                                state.password_cursor = 0;
+                            }
+                            event::KeyCode::End => {
+                                state.password_cursor = state.password_input.chars().count();
                             }
                             event::KeyCode::Esc => {
                                 state.show_password_popup = false;
@@ -176,15 +244,112 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             }
                             _ => {}
                         }
+                    } else if state.is_searching {
+                        match key.code {
+                            event::KeyCode::Esc => {
+                                state.is_searching = false;
+                            }
+                            event::KeyCode::Char('[') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                                state.is_searching = false;
+                            }
+                            event::KeyCode::Enter => {
+                                state.is_searching = false;
+                            }
+                            event::KeyCode::Char(c) => {
+                                let byte_idx = state.search_input.chars().take(state.search_cursor).map(|c| c.len_utf8()).sum();
+                                state.search_input.insert(byte_idx, c);
+                                state.search_cursor += 1;
+                                state.update_filtered_list();
+                            }
+                            event::KeyCode::Backspace if key.modifiers.intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) => {
+                                if state.search_cursor > 0 {
+                                    let chars: Vec<char> = state.search_input.chars().collect();
+                                    let mut idx = state.search_cursor;
+                                    while idx > 0 && idx <= chars.len() && chars[idx - 1].is_whitespace() {
+                                        idx -= 1;
+                                    }
+                                    while idx > 0 && !chars[idx - 1].is_whitespace() {
+                                        idx -= 1;
+                                    }
+                                    let start_byte = chars.iter().take(idx).map(|c| c.len_utf8()).sum::<usize>();
+                                    let end_byte = chars.iter().take(state.search_cursor).map(|c| c.len_utf8()).sum::<usize>();
+                                    state.search_input.replace_range(start_byte..end_byte, "");
+                                    state.search_cursor = idx;
+                                    state.update_filtered_list();
+                                }
+                            }
+                            event::KeyCode::Backspace => {
+                                if state.search_cursor > 0 {
+                                    let byte_idx = state.search_input.chars().take(state.search_cursor - 1).map(|c| c.len_utf8()).sum();
+                                    state.search_input.remove(byte_idx);
+                                    state.search_cursor -= 1;
+                                    state.update_filtered_list();
+                                }
+                            }
+                            event::KeyCode::Left if key.modifiers.intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) => {
+                                let chars: Vec<char> = state.search_input.chars().collect();
+                                let mut idx = state.search_cursor;
+                                while idx > 0 && idx <= chars.len() && chars[idx - 1].is_whitespace() {
+                                    idx -= 1;
+                                }
+                                while idx > 0 && !chars[idx - 1].is_whitespace() {
+                                    idx -= 1;
+                                }
+                                state.search_cursor = idx;
+                            }
+                            event::KeyCode::Left => {
+                                if state.search_cursor > 0 {
+                                    state.search_cursor -= 1;
+                                }
+                            }
+                            event::KeyCode::Right if key.modifiers.intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) => {
+                                let chars: Vec<char> = state.search_input.chars().collect();
+                                let mut idx = state.search_cursor;
+                                let len = chars.len();
+                                while idx < len && !chars[idx].is_whitespace() {
+                                    idx += 1;
+                                }
+                                while idx < len && chars[idx].is_whitespace() {
+                                    idx += 1;
+                                }
+                                state.search_cursor = idx;
+                            }
+                            event::KeyCode::Right => {
+                                if state.search_cursor < state.search_input.chars().count() {
+                                    state.search_cursor += 1;
+                                }
+                            }
+                            event::KeyCode::Home => {
+                                state.search_cursor = 0;
+                            }
+                            event::KeyCode::End => {
+                                state.search_cursor = state.search_input.chars().count();
+                            }
+                            _ => {}
+                        }
                     } else {
                         match key.code {
-                            event::KeyCode::Esc | event::KeyCode::Char('q') => break,
-                            event::KeyCode::Char('[') if key.modifiers.contains(event::KeyModifiers::CONTROL) => break,
+                            event::KeyCode::Char('/') => {
+                                state.is_searching = true;
+                            }
+                            event::KeyCode::Esc => {
+                                if !state.search_input.is_empty() {
+                                    state.search_input.clear();
+                                    state.update_filtered_list();
+                                }
+                            }
+                            event::KeyCode::Char('q') => break,
+                            event::KeyCode::Char('[') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                                if !state.search_input.is_empty() {
+                                    state.search_input.clear();
+                                    state.update_filtered_list();
+                                }
+                            }
                             event::KeyCode::Char('j') | event::KeyCode::Down => state.next(),
                             event::KeyCode::Char('k') | event::KeyCode::Up => state.previous(),
                             event::KeyCode::Enter => {
                                 if let Some(selected) = state.l_state.selected()
-                                    && let Some(wifi) = state.wifi_list.get(selected).cloned() {
+                                    && let Some(wifi) = state.filtered_wifi_list.get(selected).cloned() {
                                         let is_connected = if let Some(connected_ssid) = &state.connected_ssid {
                                             wifi.ssid == *connected_ssid
                                         } else {
@@ -218,6 +383,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                                 });
                                             } else {
                                                 state.show_password_popup = true;
+                                                state.password_cursor = 0;
                                                 state.connecting_to_ssid = Some(wifi.ssid.clone());
                                             }
                                         } else {
@@ -256,7 +422,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             }
                             event::KeyCode::Char('a') => {
                                 if let Some(selected) = state.l_state.selected()
-                                    && let Some(wifi) = state.wifi_list.get(selected).cloned()
+                                    && let Some(wifi) = state.filtered_wifi_list.get(selected).cloned()
                                         && wifi.is_saved {
                                             let ssid = wifi.ssid.clone();
                                             let auto_connect = !wifi.auto_connect;
@@ -273,7 +439,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             }
                             event::KeyCode::Char('f') => {
                                 if let Some(selected) = state.l_state.selected()
-                                    && let Some(wifi) = state.wifi_list.get(selected).cloned() {
+                                    && let Some(wifi) = state.filtered_wifi_list.get(selected).cloned() {
                                         let ssid = wifi.ssid.clone();
                                         let (tx, rx) = mpsc::channel(1);
                                         state.connection_result_rx = Some(rx);

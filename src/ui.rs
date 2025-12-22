@@ -11,14 +11,14 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
     // Center the main window
     let vertical_layout = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(30), // Fixed height for the main window
+        Constraint::Length(32), // Fixed height for the main window
         Constraint::Fill(1),
     ])
     .split(area);
 
     let horizontal_layout = Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Length(81),
+        Constraint::Length(77),
         Constraint::Fill(1),
     ])
     .split(vertical_layout[1]);
@@ -37,15 +37,72 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
     let inner_area = main_area.inner(Margin { vertical: 1, horizontal: 2 });
 
-    let content_layout = Layout::vertical([
+    let mut constraints = vec![
         Constraint::Min(10),   // Network list
-        Constraint::Length(10), // Details
-        Constraint::Length(1), // Bottom bar
-    ])
-    .split(inner_area);
+        Constraint::Length(9), // Details
+        Constraint::Length(2), // Bottom bar
+    ];
+
+    if state.is_searching || !state.search_input.is_empty() {
+        constraints.insert(0, Constraint::Length(3));
+    }
+
+    let content_layout = Layout::vertical(constraints).split(inner_area);
+
+    let (search_area, list_area, details_area, help_area) = if state.is_searching || !state.search_input.is_empty() {
+        (Some(content_layout[0]), content_layout[1], content_layout[2], content_layout[3])
+    } else {
+        (None, content_layout[0], content_layout[1], content_layout[2])
+    };
+
+    if let Some(area) = search_area {
+        let search_style = if state.is_searching {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+
+        let search_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" Search (/) ")
+            .border_style(search_style);
+
+        let max_width = (area.width - 2) as usize;
+        let input_len = state.search_input.chars().count();
+        let cursor_pos = state.search_cursor;
+
+        let (display_text, cursor_x) = if input_len < max_width {
+            (state.search_input.clone(), cursor_pos)
+        } else {
+            // If cursor is near the end, show the end
+            if cursor_pos >= max_width {
+                let skip = cursor_pos - max_width + 1;
+                let take = max_width;
+                let text: String = state.search_input.chars().skip(skip).take(take).collect();
+                (text, max_width - 1)
+            } else {
+                // If cursor is at the beginning, show the beginning
+                let text: String = state.search_input.chars().take(max_width).collect();
+                (text, cursor_pos)
+            }
+        };
+
+        let search_text = Paragraph::new(display_text)
+            .block(search_block);
+
+        frame.render_widget(search_text, area);
+
+        if state.is_searching {
+            frame.set_cursor_position(
+                (area.x + 1 + cursor_x as u16,
+                area.y + 1),
+            );
+        }
+    }
 
     let list_items: Vec<ListItem> = state
-        .wifi_list
+        .filtered_wifi_list
         .iter()
         .map(|w| {
             let mut ssid = w.ssid.clone();
@@ -86,10 +143,10 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 .bg(Color::DarkGray),
         );
 
-    frame.render_stateful_widget(list, content_layout[0], &mut state.l_state);
+    frame.render_stateful_widget(list, list_area, &mut state.l_state);
 
     if let Some(selected) = state.l_state.selected()
-        && let Some(wifi) = state.wifi_list.get(selected) {
+        && let Some(wifi) = state.filtered_wifi_list.get(selected) {
             let mut info = vec![
                 Line::from(vec![
                     Span::styled("SSID: ", Style::default().fg(Color::Cyan)),
@@ -146,17 +203,17 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
                         .border_style(Style::default().fg(Color::Magenta))
-                        .padding(Padding::new(1, 1, 1, 1)),
+                        .padding(Padding::new(1, 1, 0, 0)),
                 );
-            frame.render_widget(paragraph, content_layout[1]);
+            frame.render_widget(paragraph, details_area);
         }
 
-    let help_text = "q: quit | j/k: nav | enter: connect | f: forget | r: refresh | a: auto-conn";
+    let help_text = "q: quit | j/k: nav | enter: connect | f: forget | r: refresh\na: auto-conn | /: search | esc: back/clear";
     let help_paragraph = Paragraph::new(help_text)
         .style(Style::default().fg(Color::DarkGray))
         .alignment(Alignment::Center);
 
-    frame.render_widget(help_paragraph, content_layout[2]);
+    frame.render_widget(help_paragraph, help_area);
 
     if state.is_connecting {
         let loading_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -195,7 +252,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
     }
 
     if state.show_password_popup {
-        let networks_area = content_layout[0];
+        let networks_area = list_area;
         let popup_height = 3;
         let popup_area = Rect {
             x: networks_area.x,
@@ -210,6 +267,24 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .map(|_| '•')
             .collect::<String>();
 
+        let max_width = (popup_area.width - 4) as usize;
+        let input_len = popup_text.chars().count();
+        let cursor_pos = state.password_cursor;
+
+        let (display_text, cursor_x) = if input_len < max_width {
+            (popup_text, cursor_pos)
+        } else {
+            if cursor_pos >= max_width {
+                let skip = cursor_pos - max_width + 1;
+                let take = max_width;
+                let text: String = popup_text.chars().skip(skip).take(take).collect();
+                (text, max_width - 1)
+            } else {
+                let text: String = popup_text.chars().take(max_width).collect();
+                (text, cursor_pos)
+            }
+        };
+
         let popup_block = Block::default()
             .title(format!(" Password for {} ", state.connecting_to_ssid.as_deref().unwrap_or("")))
             .title_alignment(Alignment::Left)
@@ -218,11 +293,16 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .border_style(Style::default().fg(Color::Yellow))
             .padding(Padding::new(1, 1, 0, 0)); // Add padding to center vertically
 
-        let popup = Paragraph::new(popup_text)
+        let popup = Paragraph::new(display_text)
             .block(popup_block)
             .alignment(Alignment::Left);
 
         frame.render_widget(Clear, popup_area);
         frame.render_widget(popup, popup_area);
+
+        frame.set_cursor_position(
+            (popup_area.x + 2 + cursor_x as u16,
+            popup_area.y + 1),
+        );
     }
 }
