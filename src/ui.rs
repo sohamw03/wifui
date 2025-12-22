@@ -1,4 +1,5 @@
 use crate::app::AppState;
+use crate::theme;
 use ratatui::
 {
     prelude::*,
@@ -7,6 +8,9 @@ use ratatui::
 
 pub fn render(frame: &mut Frame, state: &mut AppState) {
     let area = frame.area();
+
+    // Set background color for the entire screen
+    frame.render_widget(Block::default().style(Style::default().bg(theme::BACKGROUND).fg(theme::FOREGROUND)), area);
 
     // Center the main window
     let vertical_layout = Layout::vertical([
@@ -28,10 +32,10 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
     let main_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(Style::default().fg(theme::CYAN))
         .title(" WIFUI ")
         .title_alignment(Alignment::Center)
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        .title_style(Style::default().fg(theme::CYAN).add_modifier(Modifier::BOLD));
 
     frame.render_widget(main_block, main_area);
 
@@ -57,9 +61,9 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
     if let Some(area) = search_area {
         let search_style = if state.is_searching {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(theme::YELLOW)
         } else {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(theme::CYAN)
         };
 
         let search_block = Block::default()
@@ -88,17 +92,25 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             }
         };
 
-        let search_text = Paragraph::new(display_text)
+        let mut spans = Vec::new();
+        let chars: Vec<char> = display_text.chars().collect();
+
+        for (i, c) in chars.iter().enumerate() {
+            if i == cursor_x && state.is_searching {
+                spans.push(Span::styled(c.to_string(), Style::default().bg(theme::FOREGROUND).fg(theme::BACKGROUND)));
+            } else {
+                spans.push(Span::raw(c.to_string()));
+            }
+        }
+
+        if cursor_x == chars.len() && state.is_searching {
+             spans.push(Span::styled(" ", Style::default().bg(theme::FOREGROUND).fg(theme::BACKGROUND)));
+        }
+
+        let search_text = Paragraph::new(Line::from(spans))
             .block(search_block);
 
         frame.render_widget(search_text, area);
-
-        if state.is_searching {
-            frame.set_cursor_position(
-                (area.x + 1 + cursor_x as u16,
-                area.y + 1),
-            );
-        }
     }
 
     let list_items: Vec<ListItem> = state
@@ -111,7 +123,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             if let Some(connected_ssid) = &state.connected_ssid
                 && w.ssid == *connected_ssid {
                     ssid = format!("{} 󰖩", ssid); // nf-md-wifi_check
-                    style = style.fg(Color::Green).add_modifier(Modifier::BOLD);
+                    style = style.fg(theme::GREEN).add_modifier(Modifier::BOLD);
                 }
 
             if w.is_saved {
@@ -131,16 +143,16 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         .block(
             Block::default()
                 .title(" Networks ")
-                .title_style(Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD))
+                .title_style(Style::default().fg(theme::BLUE).add_modifier(Modifier::BOLD))
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Blue)),
+                .border_style(Style::default().fg(theme::BLUE)),
         )
-        .highlight_symbol(" > ")
+        .highlight_symbol("  ")
         .highlight_style(
             Style::default()
                 .add_modifier(Modifier::BOLD)
-                .bg(Color::DarkGray),
+                .bg(theme::SELECTION_BG),
         );
 
     frame.render_stateful_widget(list, list_area, &mut state.l_state);
@@ -149,48 +161,48 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         && let Some(wifi) = state.filtered_wifi_list.get(selected) {
             let mut info = vec![
                 Line::from(vec![
-                    Span::styled("SSID: ", Style::default().fg(Color::Cyan)),
+                    Span::styled("SSID: ", Style::default().fg(theme::CYAN)),
                     Span::raw(&wifi.ssid),
                 ]),
                 Line::from(vec![
-                    Span::styled("Signal: ", Style::default().fg(Color::Cyan)),
+                    Span::styled("Signal: ", Style::default().fg(theme::CYAN)),
                     Span::raw(format!("{}% ", wifi.signal)),
                     // Add signal bar
                     Span::styled(
                         "█".repeat((wifi.signal as usize / 10).min(10)),
                         if wifi.signal > 70 {
-                            Style::default().fg(Color::Green)
+                            Style::default().fg(theme::GREEN)
                         } else if wifi.signal > 40 {
-                            Style::default().fg(Color::Yellow)
+                            Style::default().fg(theme::YELLOW)
                         } else {
-                            Style::default().fg(Color::Red)
+                            Style::default().fg(theme::RED)
                         },
                     ),
                 ]),
                 Line::from(vec![
-                    Span::styled("Security: ", Style::default().fg(Color::Cyan)),
+                    Span::styled("Security: ", Style::default().fg(theme::CYAN)),
                     Span::raw(format!("{} / {}", wifi.authentication, wifi.encryption)),
                 ]),
                 Line::from(vec![
-                    Span::styled("Type: ", Style::default().fg(Color::Cyan)),
+                    Span::styled("Type: ", Style::default().fg(theme::CYAN)),
                     Span::raw(format!("{} ({})", wifi.phy_type, wifi.network_type)),
                 ]),
                 Line::from(vec![
-                    Span::styled("Channel: ", Style::default().fg(Color::Cyan)),
+                    Span::styled("Channel: ", Style::default().fg(theme::CYAN)),
                     Span::raw(format!("{} ({:.1} GHz)", wifi.channel, wifi.frequency as f32 / 1_000_000.0)),
                 ]),
             ];
 
             if wifi.is_saved {
                 info.push(Line::from(vec![
-                    Span::styled("Auto-Connect: ", Style::default().fg(Color::Cyan)),
+                    Span::styled("Auto-Connect: ", Style::default().fg(theme::CYAN)),
                     Span::raw(if wifi.auto_connect { "Yes 󰁪" } else { "No 󱧧" }),
                 ]));
             }
 
             if let Some(speed) = wifi.link_speed {
                 info.push(Line::from(vec![
-                    Span::styled("Link Speed: ", Style::default().fg(Color::Cyan)),
+                    Span::styled("Link Speed: ", Style::default().fg(theme::CYAN)),
                     Span::raw(format!("{} Mbps", speed)),
                 ]));
             }
@@ -199,10 +211,10 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 .block(
                     Block::default()
                         .title(" Details ")
-                        .title_style(Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))
+                        .title_style(Style::default().fg(theme::PURPLE).add_modifier(Modifier::BOLD))
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
-                        .border_style(Style::default().fg(Color::Magenta))
+                        .border_style(Style::default().fg(theme::PURPLE))
                         .padding(Padding::new(1, 1, 0, 0)),
                 );
             frame.render_widget(paragraph, details_area);
@@ -210,7 +222,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
     let help_text = "q: quit | j/k: nav | enter: connect | f: forget | r: refresh\na: auto-conn | /: search | esc: back/clear";
     let help_paragraph = Paragraph::new(help_text)
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(theme::BRIGHT_BLACK))
         .alignment(Alignment::Center);
 
     frame.render_widget(help_paragraph, help_area);
@@ -227,8 +239,9 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Yellow)),
+                    .border_style(Style::default().fg(theme::YELLOW)),
             )
+            .style(Style::default().fg(theme::FOREGROUND).bg(theme::BACKGROUND))
             .alignment(Alignment::Center);
 
         frame.render_widget(Clear, loading_area);
@@ -242,10 +255,10 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Red))
+                    .border_style(Style::default().fg(theme::RED))
                     .title(" ERROR "),
             )
-            .style(Style::default().fg(Color::Red))
+            .style(Style::default().fg(theme::RED).bg(theme::BACKGROUND))
             .wrap(Wrap { trim: true });
         frame.render_widget(Clear, error_area);
         frame.render_widget(error_paragraph, error_area);
@@ -285,24 +298,35 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             }
         };
 
+        let mut spans = Vec::new();
+        let chars: Vec<char> = display_text.chars().collect();
+
+        for (i, c) in chars.iter().enumerate() {
+            if i == cursor_x {
+                spans.push(Span::styled(c.to_string(), Style::default().bg(theme::FOREGROUND).fg(theme::BACKGROUND)));
+            } else {
+                spans.push(Span::raw(c.to_string()));
+            }
+        }
+
+        if cursor_x == chars.len() {
+             spans.push(Span::styled(" ", Style::default().bg(theme::FOREGROUND).fg(theme::BACKGROUND)));
+        }
+
         let popup_block = Block::default()
             .title(format!(" Password for {} ", state.connecting_to_ssid.as_deref().unwrap_or("")))
             .title_alignment(Alignment::Left)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Yellow))
+            .border_style(Style::default().fg(theme::YELLOW))
             .padding(Padding::new(1, 1, 0, 0)); // Add padding to center vertically
 
-        let popup = Paragraph::new(display_text)
+        let popup = Paragraph::new(Line::from(spans))
             .block(popup_block)
+            .style(Style::default().fg(theme::FOREGROUND).bg(theme::BACKGROUND))
             .alignment(Alignment::Left);
 
         frame.render_widget(Clear, popup_area);
         frame.render_widget(popup, popup_area);
-
-        frame.set_cursor_position(
-            (popup_area.x + 2 + cursor_x as u16,
-            popup_area.y + 1),
-        );
     }
 }

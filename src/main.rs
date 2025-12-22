@@ -1,5 +1,6 @@
 mod app;
 mod event;
+mod theme;
 mod ui;
 mod wifi;
 
