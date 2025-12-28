@@ -127,6 +127,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
 
         if !state.is_refreshing_networks
             && !state.show_manual_add_popup
+            && !state.show_password_popup
             && state.last_refresh.elapsed() >= refresh_interval
             && state.last_interaction.elapsed() >= Duration::from_secs(1)
         {

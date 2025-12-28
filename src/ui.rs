@@ -413,30 +413,69 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         frame.render_widget(paragraph, details_area);
     }
 
-    let help_text = vec![
-        Line::from(vec![
-            Span::styled("q/ctrl+c", Style::default().fg(theme::FOREGROUND)),
-            Span::styled(" quit • ", Style::default().fg(theme::DIMMED)),
-            Span::styled("j/k", Style::default().fg(theme::FOREGROUND)),
-            Span::styled(" nav • ", Style::default().fg(theme::DIMMED)),
-            Span::styled("enter", Style::default().fg(theme::FOREGROUND)),
+    let help_text = if state.show_password_popup {
+        // Password input active - show password-specific shortcuts
+        vec![Line::from(vec![
+            Span::styled("󰌑", Style::default().fg(theme::FOREGROUND)),
             Span::styled(" connect • ", Style::default().fg(theme::DIMMED)),
-            Span::styled("f", Style::default().fg(theme::FOREGROUND)),
-            Span::styled(" forget • ", Style::default().fg(theme::DIMMED)),
-            Span::styled("r", Style::default().fg(theme::FOREGROUND)),
-            Span::styled(" refresh", Style::default().fg(theme::DIMMED)),
-        ]),
-        Line::from(vec![
-            Span::styled("a", Style::default().fg(theme::FOREGROUND)),
-            Span::styled(" auto-conn • ", Style::default().fg(theme::DIMMED)),
-            Span::styled("n", Style::default().fg(theme::FOREGROUND)),
-            Span::styled(" add new • ", Style::default().fg(theme::DIMMED)),
-            Span::styled("/", Style::default().fg(theme::FOREGROUND)),
-            Span::styled(" search • ", Style::default().fg(theme::DIMMED)),
             Span::styled("esc", Style::default().fg(theme::FOREGROUND)),
-            Span::styled(" back/clear", Style::default().fg(theme::DIMMED)),
-        ]),
-    ];
+            Span::styled(" cancel", Style::default().fg(theme::DIMMED)),
+        ])]
+    } else if state.show_manual_add_popup {
+        // Manual add popup active - show relevant navigation & actions
+        vec![
+            Line::from(vec![
+                Span::styled("⇥ / ↓", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" next • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("⇤ / ↑", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" prev • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("󰌑", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" connect • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("esc", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" cancel", Style::default().fg(theme::DIMMED)),
+            ]),
+            Line::from(vec![
+                Span::styled("󱁐", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" checkbox • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("h/l/j/k", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" dropdown", Style::default().fg(theme::DIMMED)),
+            ]),
+        ]
+    } else if state.is_searching || !state.search_input.is_empty() {
+        // Search active - show search-specific shortcuts
+        vec![Line::from(vec![
+            Span::styled("󰌑", Style::default().fg(theme::FOREGROUND)),
+            Span::styled(" apply • ", Style::default().fg(theme::DIMMED)),
+            Span::styled("esc esc", Style::default().fg(theme::FOREGROUND)),
+            Span::styled(" cancel", Style::default().fg(theme::DIMMED)),
+        ])]
+    } else {
+        // Default global help
+        vec![
+            Line::from(vec![
+                Span::styled("q", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" quit • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("j/k", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" nav • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("󰌑", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" conn / dconn • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("f", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" forget • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("r", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" refresh", Style::default().fg(theme::DIMMED)),
+            ]),
+            Line::from(vec![
+                Span::styled("a", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" auto-conn • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("n", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" add new • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("/", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" search • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("esc", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" back/clear", Style::default().fg(theme::DIMMED)),
+            ]),
+        ]
+    };
     let help_paragraph = Paragraph::new(help_text)
         .style(Style::default().fg(theme::DIMMED))
         .alignment(Alignment::Center);
