@@ -10,7 +10,7 @@
 [![Crates.io Version](https://img.shields.io/crates/v/wifui)](https://crates.io/crates/wifui)
 ![GitHub Repo stars](https://img.shields.io/github/stars/sohamw03/wifui)
 
-**WifUI** is a blazing fast, lightweight Terminal User Interface (TUI) for managing Wi-Fi connections on **Windows**. Built with Rust and `ratatui`, it offers a keyboard-centric way to scan, conne[...]
+**WifUI** is a blazing fast, lightweight Terminal User Interface (TUI) for managing Wi-Fi connections on **Windows**. Built with Rust and `ratatui`, it offers a keyboard-centric way to scan, connect, and monitor your network status without leaving the terminal.
 
 ## 🚀 Features
 
