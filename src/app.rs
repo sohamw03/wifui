@@ -1,4 +1,4 @@
-use crate::wifi::{get_connected_ssid, WifiInfo};
+use crate::wifi::{WifiInfo, get_connected_ssid};
 use color_eyre::eyre::Result;
 use ratatui::widgets::ListState;
 use std::time::{Duration, Instant};
@@ -30,13 +30,21 @@ pub struct AppState {
     pub connection_start_time: Option<Instant>,
     pub show_key_logger: bool,
     pub last_key_press: Option<(String, Instant)>,
+    pub show_manual_add_popup: bool,
+    pub manual_ssid_input: String,
+    pub manual_password_input: String,
+    pub manual_security: String,
+    pub manual_hidden: bool,
+    pub manual_input_field: usize,
+    pub manual_ssid_cursor: usize,
+    pub manual_password_cursor: usize,
 }
 
 impl AppState {
     pub fn new(wifi_list: Vec<WifiInfo>, show_key_logger: bool) -> AppState {
         AppState {
             filtered_wifi_list: wifi_list.clone(),
-            wifi_list,
+            wifi_list: wifi_list.clone(),
             l_state: ListState::default().with_selected(Some(0)),
             connected_ssid: get_connected_ssid().unwrap_or(None),
             show_password_popup: false,
@@ -59,14 +67,22 @@ impl AppState {
             connection_start_time: None,
             show_key_logger,
             last_key_press: None,
+            show_manual_add_popup: false,
+            manual_ssid_input: String::new(),
+            manual_password_input: String::new(),
+            manual_security: "WPA2-PSK".to_string(),
+            manual_hidden: false,
+            manual_input_field: 0,
+            manual_ssid_cursor: 0,
+            manual_password_cursor: 0,
         }
     }
 
     pub fn next(&mut self) {
         let i = match self.l_state.selected() {
             Some(i) => {
-                if i >= self.filtered_wifi_list.len() - 1 {
-                    0
+                if i >= self.filtered_wifi_list.len().saturating_sub(1) {
+                    i
                 } else {
                     i + 1
                 }
@@ -80,7 +96,7 @@ impl AppState {
         let i = match self.l_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.filtered_wifi_list.len() - 1
+                    0
                 } else {
                     i - 1
                 }
@@ -90,12 +106,25 @@ impl AppState {
         self.l_state.select(Some(i));
     }
 
+    pub fn go_to_top(&mut self) {
+        if !self.filtered_wifi_list.is_empty() {
+            self.l_state.select(Some(0));
+        }
+    }
+
+    pub fn go_to_bottom(&mut self) {
+        if !self.filtered_wifi_list.is_empty() {
+            self.l_state.select(Some(self.filtered_wifi_list.len() - 1));
+        }
+    }
+
     pub fn update_filtered_list(&mut self) {
         if self.search_input.is_empty() {
             self.filtered_wifi_list = self.wifi_list.clone();
         } else {
             let search_lower = self.search_input.to_lowercase();
-            self.filtered_wifi_list = self.wifi_list
+            self.filtered_wifi_list = self
+                .wifi_list
                 .iter()
                 .filter(|w| {
                     let ssid_lower = w.ssid.to_lowercase();

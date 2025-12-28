@@ -76,12 +76,15 @@ wifui
 | :--- | :--- |
 | `↑` / `k` | Move Selection Up |
 | `↓` / `j` | Move Selection Down |
+| `g` | Go to Top |
+| `G` | Go to Bottom |
 | `Enter` | Connect / Disconnect |
+| `n` | Add Manual Network |
 | `r` | Refresh Network List |
 | `f` | Forget Network |
 | `a` | Toggle Auto Connect |
 | `/` | Search Networks |
-| `q` | Quit |
+| `q` / `Ctrl + c` | Quit |
 | `Esc` | Back / Clear Search / Quit |
 
 ### Input Navigation (Search & Password)

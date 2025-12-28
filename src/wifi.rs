@@ -1,11 +1,11 @@
 use color_eyre::eyre::{Result, eyre};
 use std::collections::HashMap;
 use windows::{
-    core::{GUID, PCWSTR, PWSTR},
     Win32::{
         Foundation::{ERROR_SUCCESS, HANDLE},
         NetworkManagement::WiFi::*,
     },
+    core::{GUID, PCWSTR, PWSTR},
 };
 
 #[derive(Debug, Default, Clone)]
@@ -16,6 +16,7 @@ pub struct WifiInfo {
     pub encryption: String,
     pub signal: u8,
     pub is_saved: bool,
+    pub is_connected: bool,
     pub auto_connect: bool,
     pub phy_type: String,
     pub channel: u32,
@@ -46,8 +47,8 @@ fn get_interface_guid(handle: HANDLE) -> Result<GUID> {
         }
 
         if (*interface_list).dwNumberOfItems == 0 {
-             WlanFreeMemory(interface_list as *mut _);
-             return Err(eyre!("No WiFi interface found"));
+            WlanFreeMemory(interface_list as *mut _);
+            return Err(eyre!("No WiFi interface found"));
         }
 
         let interface_info = &(*interface_list).InterfaceInfo[0];
@@ -81,9 +82,15 @@ pub fn get_connected_ssid() -> Result<Option<String>> {
         if result == ERROR_SUCCESS.0 {
             let connection_attributes = &*(data_ptr as *const WLAN_CONNECTION_ATTRIBUTES);
             if connection_attributes.isState == wlan_interface_state_connected {
-                 let ssid_len = connection_attributes.wlanAssociationAttributes.dot11Ssid.uSSIDLength as usize;
-                 let ssid_bytes = &connection_attributes.wlanAssociationAttributes.dot11Ssid.ucSSID[..ssid_len];
-                 connected_ssid = Some(String::from_utf8_lossy(ssid_bytes).to_string());
+                let ssid_len = connection_attributes
+                    .wlanAssociationAttributes
+                    .dot11Ssid
+                    .uSSIDLength as usize;
+                let ssid_bytes = &connection_attributes
+                    .wlanAssociationAttributes
+                    .dot11Ssid
+                    .ucSSID[..ssid_len];
+                connected_ssid = Some(String::from_utf8_lossy(ssid_bytes).to_string());
             }
             WlanFreeMemory(data_ptr);
         }
@@ -110,7 +117,10 @@ pub fn scan_networks() -> Result<()> {
 
 fn is_profile_auto_connect(handle: HANDLE, guid: &GUID, profile_name: &str) -> bool {
     unsafe {
-        let profile_name_wide: Vec<u16> = profile_name.encode_utf16().chain(std::iter::once(0)).collect();
+        let profile_name_wide: Vec<u16> = profile_name
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let p_profile_name = PCWSTR(profile_name_wide.as_ptr());
         let mut p_profile_xml = PWSTR::null();
         let mut flags = 0;
@@ -122,7 +132,7 @@ fn is_profile_auto_connect(handle: HANDLE, guid: &GUID, profile_name: &str) -> b
             None,
             &mut p_profile_xml,
             Some(&mut flags),
-            None
+            None,
         );
 
         if result == ERROR_SUCCESS.0 && !p_profile_xml.is_null() {
@@ -146,14 +156,15 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
         let result = WlanGetAvailableNetworkList(
             handle,
             &guid,
-            WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_ADHOC_PROFILES | WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_MANUAL_HIDDEN_PROFILES,
+            WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_ADHOC_PROFILES
+                | WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_MANUAL_HIDDEN_PROFILES,
             None,
-            &mut available_network_list
+            &mut available_network_list,
         );
 
         if result != ERROR_SUCCESS.0 {
-             WlanCloseHandle(handle, None);
-             return Err(eyre!("Failed to get available networks: {}", result));
+            WlanCloseHandle(handle, None);
+            return Err(eyre!("Failed to get available networks: {}", result));
         }
 
         // Get current connection info for link speed
@@ -173,15 +184,15 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
         );
 
         if result_query == ERROR_SUCCESS.0 {
-             let conn = &*(data_ptr as *const WLAN_CONNECTION_ATTRIBUTES);
-             if conn.isState == wlan_interface_state_connected {
-                 let ssid_len = conn.wlanAssociationAttributes.dot11Ssid.uSSIDLength as usize;
-                 let ssid_bytes = &conn.wlanAssociationAttributes.dot11Ssid.ucSSID[..ssid_len];
-                 let ssid = String::from_utf8_lossy(ssid_bytes).to_string();
-                 let tx_rate = conn.wlanAssociationAttributes.ulTxRate;
-                 current_connection = Some((ssid, tx_rate));
-             }
-             WlanFreeMemory(data_ptr);
+            let conn = &*(data_ptr as *const WLAN_CONNECTION_ATTRIBUTES);
+            if conn.isState == wlan_interface_state_connected {
+                let ssid_len = conn.wlanAssociationAttributes.dot11Ssid.uSSIDLength as usize;
+                let ssid_bytes = &conn.wlanAssociationAttributes.dot11Ssid.ucSSID[..ssid_len];
+                let ssid = String::from_utf8_lossy(ssid_bytes).to_string();
+                let tx_rate = conn.wlanAssociationAttributes.ulTxRate;
+                current_connection = Some((ssid, tx_rate));
+            }
+            WlanFreeMemory(data_ptr);
         }
 
         // Get BSS List to find channel, frequency and rate
@@ -198,33 +209,36 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
 
         let mut bss_entries: &[WLAN_BSS_ENTRY] = &[];
         if result_bss == ERROR_SUCCESS.0 && !bss_list.is_null() {
-             let num_bss = (*bss_list).dwNumberOfItems;
-             bss_entries = std::slice::from_raw_parts(
-                (*bss_list).wlanBssEntries.as_ptr(),
-                num_bss as usize
-            );
+            let num_bss = (*bss_list).dwNumberOfItems;
+            bss_entries =
+                std::slice::from_raw_parts((*bss_list).wlanBssEntries.as_ptr(), num_bss as usize);
         }
 
         let num_items = (*available_network_list).dwNumberOfItems;
         let items = std::slice::from_raw_parts(
             (*available_network_list).Network.as_ptr(),
-            num_items as usize
+            num_items as usize,
         );
 
         let mut wifi_map: HashMap<(String, String), WifiInfo> = HashMap::new();
 
         for item in items {
             let ssid_len = item.dot11Ssid.uSSIDLength as usize;
-            if ssid_len == 0 { continue; }
+            if ssid_len == 0 {
+                continue;
+            }
 
             let ssid_bytes = &item.dot11Ssid.ucSSID[..ssid_len];
             let ssid = String::from_utf8_lossy(ssid_bytes).to_string();
 
             // Find best BSS entry for this SSID
-            let best_bss = bss_entries.iter()
+            let best_bss = bss_entries
+                .iter()
                 .filter(|bss| {
                     let bss_ssid_len = bss.dot11Ssid.uSSIDLength as usize;
-                    if bss_ssid_len != ssid_len { return false; }
+                    if bss_ssid_len != ssid_len {
+                        return false;
+                    }
                     &bss.dot11Ssid.ucSSID[..bss_ssid_len] == ssid_bytes
                 })
                 .max_by_key(|bss| bss.lRssi);
@@ -232,7 +246,11 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
             let (frequency, channel) = if let Some(bss) = best_bss {
                 let freq = bss.ulChCenterFrequency;
                 let ch = if (2412000..=2484000).contains(&freq) {
-                    if freq == 2484000 { 14 } else { (freq - 2407000) / 5000 }
+                    if freq == 2484000 {
+                        14
+                    } else {
+                        (freq - 2407000) / 5000
+                    }
                 } else if (5000000..=5900000).contains(&freq) {
                     (freq - 5000000) / 5000
                 } else if (5925000..=7125000).contains(&freq) {
@@ -247,10 +265,13 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
             };
 
             let mut link_speed = None;
+            let mut is_connected = false;
             if let Some((ref conn_ssid, conn_rate)) = current_connection
-                && *conn_ssid == ssid {
-                    link_speed = Some(conn_rate / 1000); // Kbps to Mbps
-                }
+                && *conn_ssid == ssid
+            {
+                link_speed = Some(conn_rate / 1000); // Kbps to Mbps
+                is_connected = true;
+            }
 
             let authentication = match item.dot11DefaultAuthAlgorithm {
                 DOT11_AUTH_ALGO_80211_OPEN => "Open",
@@ -263,7 +284,8 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
                 DOT11_AUTH_ALGO_WPA3 => "WPA3",
                 DOT11_AUTH_ALGO_WPA3_SAE => "WPA3-SAE",
                 _ => "Unknown",
-            }.to_string();
+            }
+            .to_string();
 
             let encryption = match item.dot11DefaultCipherAlgorithm {
                 DOT11_CIPHER_ALGO_NONE => "None",
@@ -274,7 +296,8 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
                 DOT11_CIPHER_ALGO_WPA_USE_GROUP => "WPA-Group",
                 DOT11_CIPHER_ALGO_GCMP => "GCMP",
                 _ => "Unknown",
-            }.to_string();
+            }
+            .to_string();
 
             let is_saved = (item.dwFlags & WLAN_AVAILABLE_NETWORK_HAS_PROFILE) != 0;
             let mut auto_connect = false;
@@ -287,15 +310,16 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
                 dot11_BSS_type_independent => "Ad-hoc",
                 dot11_BSS_type_any => "Any",
                 _ => "Unknown",
-            }.to_string();
+            }
+            .to_string();
 
             let phy_types = std::slice::from_raw_parts(
                 item.dot11PhyTypes.as_ptr(),
-                item.uNumberOfPhyTypes as usize
+                item.uNumberOfPhyTypes as usize,
             );
 
             let phy_type = if let Some(phy) = phy_types.first() {
-                 match *phy {
+                match *phy {
                     dot11_phy_type_ofdm => "802.11a",
                     dot11_phy_type_hrdsss => "802.11b",
                     dot11_phy_type_erp => "802.11g",
@@ -304,7 +328,8 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
                     dot11_phy_type_he => "802.11ax (Wi-Fi 6)",
                     dot11_phy_type_eht => "802.11be (Wi-Fi 7)",
                     _ => "Legacy/Unknown",
-                 }.to_string()
+                }
+                .to_string()
             } else {
                 "Unknown".to_string()
             };
@@ -318,6 +343,7 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
                 encryption,
                 signal,
                 is_saved,
+                is_connected,
                 auto_connect,
                 phy_type,
                 channel,
@@ -325,10 +351,18 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
                 link_speed,
             };
 
-            wifi_map.entry((ssid, authentication))
+            wifi_map
+                .entry((ssid, authentication))
                 .and_modify(|info| {
-                    if new_info.is_saved { info.is_saved = true; }
-                    if new_info.signal > info.signal { info.signal = new_info.signal; }
+                    if new_info.is_saved {
+                        info.is_saved = true;
+                    }
+                    if new_info.is_connected {
+                        info.is_connected = true;
+                    }
+                    if new_info.signal > info.signal {
+                        info.signal = new_info.signal;
+                    }
                 })
                 .or_insert(new_info);
         }
@@ -342,8 +376,16 @@ pub fn get_wifi_networks() -> Result<Vec<WifiInfo>> {
         WlanCloseHandle(handle, None);
     }
 
-    // Sort by signal strength descending
-    wifi_list.sort_by(|a, b| b.signal.cmp(&a.signal));
+    // Sort by connected first, then saved, then signal strength descending
+    wifi_list.sort_by(|a, b| {
+        if a.is_connected != b.is_connected {
+            return b.is_connected.cmp(&a.is_connected);
+        }
+        if a.is_saved != b.is_saved {
+            return b.is_saved.cmp(&a.is_saved);
+        }
+        b.signal.cmp(&a.signal)
+    });
 
     Ok(wifi_list)
 }
@@ -362,7 +404,7 @@ pub fn get_saved_profiles() -> Result<Vec<String>> {
             let num_items = (*profile_list).dwNumberOfItems;
             let items = std::slice::from_raw_parts(
                 (*profile_list).ProfileInfo.as_ptr(),
-                num_items as usize
+                num_items as usize,
             );
 
             for item in items {
@@ -383,10 +425,10 @@ pub fn get_saved_profiles() -> Result<Vec<String>> {
 
 fn escape_xml(s: &str) -> String {
     s.replace("&", "&amp;")
-     .replace("<", "&lt;")
-     .replace(">", "&gt;")
-     .replace("\"", "&quot;")
-     .replace("'", "&apos;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&apos;")
 }
 
 pub fn connect_profile(ssid: &str) -> Result<()> {
@@ -416,7 +458,13 @@ pub fn connect_profile(ssid: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn connect_with_password(ssid: &str, password: &str, auth: &str, cipher: &str) -> Result<()> {
+pub fn connect_with_password(
+    ssid: &str,
+    password: &str,
+    auth: &str,
+    cipher: &str,
+    hidden: bool,
+) -> Result<()> {
     let ssid_escaped = escape_xml(ssid);
     let password_escaped = escape_xml(password);
 
@@ -433,6 +481,12 @@ pub fn connect_with_password(ssid: &str, password: &str, auth: &str, cipher: &st
 
     let final_cipher = if cipher == "GCMP" { "GCMP" } else { xml_cipher };
 
+    let non_broadcast = if hidden {
+        "<nonBroadcast>true</nonBroadcast>"
+    } else {
+        ""
+    };
+
     let profile_xml = format!(
         r#"<?xml version="1.0"?>
 <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
@@ -441,6 +495,7 @@ pub fn connect_with_password(ssid: &str, password: &str, auth: &str, cipher: &st
         <SSID>
             <name>{}</name>
         </SSID>
+        {}
     </SSIDConfig>
     <connectionType>ESS</connectionType>
     <connectionMode>auto</connectionMode>
@@ -459,14 +514,17 @@ pub fn connect_with_password(ssid: &str, password: &str, auth: &str, cipher: &st
         </security>
     </MSM>
 </WLANProfile>"#,
-        ssid_escaped, ssid_escaped, xml_auth, final_cipher, password_escaped
+        ssid_escaped, ssid_escaped, non_broadcast, xml_auth, final_cipher, password_escaped
     );
 
     let (handle, _) = get_wlan_handle()?;
     let guid = get_interface_guid(handle)?;
 
     unsafe {
-        let xml_wide: Vec<u16> = profile_xml.encode_utf16().chain(std::iter::once(0)).collect();
+        let xml_wide: Vec<u16> = profile_xml
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let p_profile_xml = PCWSTR(xml_wide.as_ptr());
 
         let mut reason_code = 0;
@@ -478,12 +536,16 @@ pub fn connect_with_password(ssid: &str, password: &str, auth: &str, cipher: &st
             None,
             true,
             None,
-            &mut reason_code
+            &mut reason_code,
         );
 
         if result != ERROR_SUCCESS.0 {
             WlanCloseHandle(handle, None);
-            return Err(eyre!("Failed to add profile: {} (Reason: {})", result, reason_code));
+            return Err(eyre!(
+                "Failed to add profile: {} (Reason: {})",
+                result,
+                reason_code
+            ));
         }
         WlanCloseHandle(handle, None);
     }
@@ -491,8 +553,14 @@ pub fn connect_with_password(ssid: &str, password: &str, auth: &str, cipher: &st
     connect_profile(ssid)
 }
 
-pub fn connect_open(ssid: &str) -> Result<()> {
+pub fn connect_open(ssid: &str, hidden: bool) -> Result<()> {
     let ssid_escaped = escape_xml(ssid);
+    let non_broadcast = if hidden {
+        "<nonBroadcast>true</nonBroadcast>"
+    } else {
+        ""
+    };
+
     let profile_xml = format!(
         r#"<?xml version="1.0"?>
 <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
@@ -501,6 +569,7 @@ pub fn connect_open(ssid: &str) -> Result<()> {
         <SSID>
             <name>{}</name>
         </SSID>
+        {}
     </SSIDConfig>
     <connectionType>ESS</connectionType>
     <connectionMode>manual</connectionMode>
@@ -514,14 +583,17 @@ pub fn connect_open(ssid: &str) -> Result<()> {
         </security>
     </MSM>
 </WLANProfile>"#,
-        ssid_escaped, ssid_escaped
+        ssid_escaped, ssid_escaped, non_broadcast
     );
 
     let (handle, _) = get_wlan_handle()?;
     let guid = get_interface_guid(handle)?;
 
     unsafe {
-        let xml_wide: Vec<u16> = profile_xml.encode_utf16().chain(std::iter::once(0)).collect();
+        let xml_wide: Vec<u16> = profile_xml
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let p_profile_xml = PCWSTR(xml_wide.as_ptr());
 
         let mut reason_code = 0;
@@ -533,12 +605,16 @@ pub fn connect_open(ssid: &str) -> Result<()> {
             None,
             true,
             None,
-            &mut reason_code
+            &mut reason_code,
         );
 
         if result != ERROR_SUCCESS.0 {
             WlanCloseHandle(handle, None);
-            return Err(eyre!("Failed to add open profile: {} (Reason: {})", result, reason_code));
+            return Err(eyre!(
+                "Failed to add open profile: {} (Reason: {})",
+                result,
+                reason_code
+            ));
         }
         WlanCloseHandle(handle, None);
     }
@@ -596,12 +672,12 @@ pub fn set_auto_connect(ssid: &str, enable: bool) -> Result<()> {
             None,
             &mut p_profile_xml,
             Some(&mut flags),
-            None
+            None,
         );
 
         if result != ERROR_SUCCESS.0 || p_profile_xml.is_null() {
-             WlanCloseHandle(handle, None);
-             return Err(eyre!("Failed to get profile: {}", result));
+            WlanCloseHandle(handle, None);
+            return Err(eyre!("Failed to get profile: {}", result));
         }
 
         let xml = p_profile_xml.to_string().unwrap_or_default();
@@ -609,12 +685,18 @@ pub fn set_auto_connect(ssid: &str, enable: bool) -> Result<()> {
 
         let new_mode = if enable { "auto" } else { "manual" };
         let new_xml = if xml.contains("<connectionMode>auto</connectionMode>") {
-            xml.replace("<connectionMode>auto</connectionMode>", &format!("<connectionMode>{}</connectionMode>", new_mode))
+            xml.replace(
+                "<connectionMode>auto</connectionMode>",
+                &format!("<connectionMode>{}</connectionMode>", new_mode),
+            )
         } else if xml.contains("<connectionMode>manual</connectionMode>") {
-            xml.replace("<connectionMode>manual</connectionMode>", &format!("<connectionMode>{}</connectionMode>", new_mode))
+            xml.replace(
+                "<connectionMode>manual</connectionMode>",
+                &format!("<connectionMode>{}</connectionMode>", new_mode),
+            )
         } else {
-             WlanCloseHandle(handle, None);
-             return Err(eyre!("Could not find connectionMode in profile XML"));
+            WlanCloseHandle(handle, None);
+            return Err(eyre!("Could not find connectionMode in profile XML"));
         };
 
         let xml_wide: Vec<u16> = new_xml.encode_utf16().chain(std::iter::once(0)).collect();
@@ -629,13 +711,17 @@ pub fn set_auto_connect(ssid: &str, enable: bool) -> Result<()> {
             None,
             true,
             None,
-            &mut reason_code
+            &mut reason_code,
         );
 
         WlanCloseHandle(handle, None);
 
         if result != ERROR_SUCCESS.0 {
-            return Err(eyre!("Failed to set profile: {} (Reason: {})", result, reason_code));
+            return Err(eyre!(
+                "Failed to set profile: {} (Reason: {})",
+                result,
+                reason_code
+            ));
         }
     }
     Ok(())

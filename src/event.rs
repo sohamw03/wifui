@@ -1,7 +1,10 @@
 use crate::{
     app::AppState,
     ui::render,
-    wifi::{connect_with_password, get_saved_profiles, connect_profile, get_wifi_networks, forget_network, get_connected_ssid, disconnect, connect_open, set_auto_connect, scan_networks},
+    wifi::{
+        connect_open, connect_profile, connect_with_password, disconnect, forget_network,
+        get_connected_ssid, get_saved_profiles, get_wifi_networks, scan_networks, set_auto_connect,
+    },
 };
 use color_eyre::eyre::Result;
 use crossterm::{
@@ -21,54 +24,67 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
 
         // Check for connection result
         if let Some(rx) = &mut state.connection_result_rx
-            && let Ok(result) = rx.try_recv() {
-                state.connection_result_rx = None;
-                if let Err(e) = result {
-                    state.is_connecting = false;
-                    state.target_ssid = None;
-                    state.connection_start_time = None;
-                    state.error_message = Some(format!("Failed to connect: {}", e));
-                } else {
-                    // Connection initiated successfully, now wait for it to actually connect
-                    state.refresh_burst = 15; // Increase burst to check status frequently
-                }
-                // Trigger background refresh instead of blocking
-                state.is_refreshing_networks = true;
-                let (tx, rx) = mpsc::channel(1);
-                state.network_update_rx = Some(rx);
-                tokio::spawn(async move {
-                    let result = tokio::task::spawn_blocking(|| {
-                        let networks = get_wifi_networks()?;
-                        let connected = get_connected_ssid()?;
-                        Ok((networks, connected))
-                    }).await.unwrap();
-                    let _ = tx.send(result).await;
-                });
+            && let Ok(result) = rx.try_recv()
+        {
+            state.connection_result_rx = None;
+            if let Err(e) = result {
+                state.is_connecting = false;
+                state.target_ssid = None;
+                state.connection_start_time = None;
+                state.error_message = Some(format!("Failed to connect: {}", e));
+            } else {
+                // Connection initiated successfully, now wait for it to actually connect
+                state.refresh_burst = 15; // Increase burst to check status frequently
             }
+            // Trigger background refresh instead of blocking
+            state.is_refreshing_networks = true;
+            let (tx, rx) = mpsc::channel(1);
+            state.network_update_rx = Some(rx);
+            tokio::spawn(async move {
+                let result = tokio::task::spawn_blocking(|| {
+                    let networks = get_wifi_networks()?;
+                    let connected = get_connected_ssid()?;
+                    Ok((networks, connected))
+                })
+                .await
+                .unwrap();
+                let _ = tx.send(result).await;
+            });
+        }
 
         // Check for network updates
         if let Some(rx) = &mut state.network_update_rx
-            && let Ok(result) = rx.try_recv() {
-                if let Ok((new_list, connected_ssid)) = result {
-                    // Try to preserve selection
-                    let selected_ssid = state.l_state.selected().and_then(|i| state.wifi_list.get(i)).map(|w| w.ssid.clone());
+            && let Ok(result) = rx.try_recv()
+        {
+            if let Ok((new_list, connected_ssid)) = result {
+                let connection_changed = state.connected_ssid != connected_ssid;
 
-                    state.wifi_list = new_list;
-                    state.connected_ssid = connected_ssid;
-                    state.update_filtered_list();
+                // Try to preserve selection
+                let selected_ssid = state
+                    .l_state
+                    .selected()
+                    .and_then(|i| state.wifi_list.get(i))
+                    .map(|w| w.ssid.clone());
 
-                    if let Some(ssid) = selected_ssid {
-                        if let Some(pos) = state.filtered_wifi_list.iter().position(|w| w.ssid == ssid) {
-                            state.l_state.select(Some(pos));
-                        } else {
-                            state.l_state.select(Some(0));
-                        }
+                state.wifi_list = new_list;
+                state.connected_ssid = connected_ssid;
+                state.update_filtered_list();
+
+                if connection_changed && state.connected_ssid.is_some() {
+                    state.l_state.select(Some(0));
+                } else if let Some(ssid) = selected_ssid {
+                    if let Some(pos) = state.filtered_wifi_list.iter().position(|w| w.ssid == ssid)
+                    {
+                        state.l_state.select(Some(pos));
+                    } else {
+                        state.l_state.select(Some(0));
                     }
                 }
-                state.is_refreshing_networks = false;
-                state.network_update_rx = None;
-                state.last_refresh = Instant::now();
             }
+            state.is_refreshing_networks = false;
+            state.network_update_rx = None;
+            state.last_refresh = Instant::now();
+        }
 
         // Check if connected to target SSID
         if state.is_connecting {
@@ -76,26 +92,28 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
 
             if let Some(target) = &state.target_ssid {
                 if let Some(connected) = &state.connected_ssid
-                    && connected == target {
-                        state.is_connecting = false;
-                        state.target_ssid = None;
-                        state.connection_start_time = None;
-                    }
+                    && connected == target
+                {
+                    state.is_connecting = false;
+                    state.target_ssid = None;
+                    state.connection_start_time = None;
+                }
 
                 // Check for timeout (e.g. 20 seconds)
                 if let Some(start_time) = state.connection_start_time
-                    && start_time.elapsed() > Duration::from_secs(20) {
-                        state.is_connecting = false;
-                        state.target_ssid = None;
-                        state.connection_start_time = None;
-                        state.error_message = Some("Connection timed out".to_string());
-                    }
+                    && start_time.elapsed() > Duration::from_secs(20)
+                {
+                    state.is_connecting = false;
+                    state.target_ssid = None;
+                    state.connection_start_time = None;
+                    state.error_message = Some("Connection timed out".to_string());
+                }
             } else {
                 // If no target SSID is set but is_connecting is true, it might be a disconnect or forget operation
                 // In those cases we should probably just turn off is_connecting when the operation completes
                 // But for now, let's assume is_connecting implies we are waiting for a connection unless connection_result_rx is active
                 if state.connection_result_rx.is_none() {
-                     state.is_connecting = false;
+                    state.is_connecting = false;
                 }
             }
         }
@@ -108,6 +126,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
         };
 
         if !state.is_refreshing_networks
+            && !state.show_manual_add_popup
             && state.last_refresh.elapsed() >= refresh_interval
             && state.last_interaction.elapsed() >= Duration::from_secs(1)
         {
@@ -123,7 +142,9 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                     let networks = get_wifi_networks()?;
                     let connected = get_connected_ssid()?;
                     Ok((networks, connected))
-                }).await.unwrap();
+                })
+                .await
+                .unwrap();
                 let _ = tx.send(result).await;
             });
         }
@@ -141,7 +162,9 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                         if key.modifiers.contains(event::KeyModifiers::ALT) {
                             key_str.push_str("Alt+");
                         }
-                        if key.modifiers.contains(event::KeyModifiers::SHIFT) && !matches!(key.code, event::KeyCode::Char(_)) {
+                        if key.modifiers.contains(event::KeyModifiers::SHIFT)
+                            && !matches!(key.code, event::KeyCode::Char(_))
+                        {
                             key_str.push_str("Shift+");
                         }
 
@@ -172,7 +195,428 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                         state.error_message = None;
                     }
 
-                    if state.show_password_popup {
+                    // Global shortcuts
+                    if key.code == event::KeyCode::Char('c')
+                        && key.modifiers.contains(event::KeyModifiers::CONTROL)
+                    {
+                        break;
+                    }
+
+                    if state.show_manual_add_popup {
+                        match key.code {
+                            event::KeyCode::Esc => {
+                                state.show_manual_add_popup = false;
+                                state.manual_ssid_input.clear();
+                                state.manual_password_input.clear();
+                                state.manual_input_field = 0;
+                                state.manual_ssid_cursor = 0;
+                                state.manual_password_cursor = 0;
+                            }
+                            event::KeyCode::Char('[')
+                                if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                            {
+                                let mut cleared = false;
+                                match state.manual_input_field {
+                                    0 => {
+                                        if !state.manual_ssid_input.is_empty() {
+                                            state.manual_ssid_input.clear();
+                                            state.manual_ssid_cursor = 0;
+                                            cleared = true;
+                                        }
+                                    }
+                                    1 => {
+                                        if !state.manual_password_input.is_empty() {
+                                            state.manual_password_input.clear();
+                                            state.manual_password_cursor = 0;
+                                            cleared = true;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+
+                                if !cleared {
+                                    state.show_manual_add_popup = false;
+                                    state.manual_ssid_input.clear();
+                                    state.manual_password_input.clear();
+                                    state.manual_input_field = 0;
+                                    state.manual_ssid_cursor = 0;
+                                    state.manual_password_cursor = 0;
+                                }
+                            }
+                            event::KeyCode::Tab | event::KeyCode::Down => {
+                                state.manual_input_field = (state.manual_input_field + 1) % 6;
+                            }
+                            event::KeyCode::BackTab | event::KeyCode::Up => {
+                                if state.manual_input_field == 0 {
+                                    state.manual_input_field = 5;
+                                } else {
+                                    state.manual_input_field -= 1;
+                                }
+                            }
+                            event::KeyCode::Enter => {
+                                match state.manual_input_field {
+                                    3 => state.manual_hidden = !state.manual_hidden,
+                                    4 => {
+                                        // Connect
+                                        if !state.manual_ssid_input.is_empty() {
+                                            state.is_connecting = true;
+                                            state.target_ssid =
+                                                Some(state.manual_ssid_input.clone());
+                                            state.connection_start_time = Some(Instant::now());
+                                            let ssid = state.manual_ssid_input.clone();
+                                            let password = state.manual_password_input.clone();
+                                            let security = state.manual_security.clone();
+                                            let hidden = state.manual_hidden;
+
+                                            let (tx, rx) = mpsc::channel(1);
+                                            state.connection_result_rx = Some(rx);
+
+                                            tokio::spawn(async move {
+                                                if get_connected_ssid().unwrap_or(None).is_some() {
+                                                    let _ = tokio::task::spawn_blocking(disconnect)
+                                                        .await;
+                                                }
+                                                let result =
+                                                    tokio::task::spawn_blocking(move || {
+                                                        if security == "Open" {
+                                                            connect_open(&ssid, hidden)
+                                                        } else {
+                                                            // Map security string to auth/cipher
+                                                            let (auth, cipher) = match security
+                                                                .as_str()
+                                                            {
+                                                                "WPA3-SAE" => ("WPA3-SAE", "AES"),
+                                                                "WPA2-PSK" => ("WPA2-PSK", "AES"),
+                                                                "WPA-PSK" => ("WPA-PSK", "AES"),
+                                                                "WEP" => ("Shared", "WEP"),
+                                                                _ => ("WPA2-PSK", "AES"),
+                                                            };
+                                                            connect_with_password(
+                                                                &ssid, &password, auth, cipher,
+                                                                hidden,
+                                                            )
+                                                        }
+                                                    })
+                                                    .await
+                                                    .unwrap();
+                                                let _ = tx.send(result).await;
+                                            });
+
+                                            state.show_manual_add_popup = false;
+                                            state.manual_ssid_input.clear();
+                                            state.manual_password_input.clear();
+                                            state.manual_ssid_cursor = 0;
+                                            state.manual_password_cursor = 0;
+                                        }
+                                    }
+                                    5 => {
+                                        // Cancel
+                                        state.show_manual_add_popup = false;
+                                        state.manual_ssid_input.clear();
+                                        state.manual_password_input.clear();
+                                        state.manual_ssid_cursor = 0;
+                                        state.manual_password_cursor = 0;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            event::KeyCode::Char(' ') if state.manual_input_field == 3 => {
+                                state.manual_hidden = !state.manual_hidden;
+                            }
+                            event::KeyCode::Char(c) => {
+                                match state.manual_input_field {
+                                    0 => {
+                                        let byte_idx = state
+                                            .manual_ssid_input
+                                            .chars()
+                                            .take(state.manual_ssid_cursor)
+                                            .map(|c| c.len_utf8())
+                                            .sum();
+                                        state.manual_ssid_input.insert(byte_idx, c);
+                                        state.manual_ssid_cursor += 1;
+                                    }
+                                    1 => {
+                                        let byte_idx = state
+                                            .manual_password_input
+                                            .chars()
+                                            .take(state.manual_password_cursor)
+                                            .map(|c| c.len_utf8())
+                                            .sum();
+                                        state.manual_password_input.insert(byte_idx, c);
+                                        state.manual_password_cursor += 1;
+                                    }
+                                    2 => {
+                                        // Handle h/j/k/l for Security field
+                                        let options =
+                                            ["WPA2-PSK", "WPA3-SAE", "Open", "WPA-PSK", "WEP"];
+                                        let current_idx = options
+                                            .iter()
+                                            .position(|&s| s == state.manual_security)
+                                            .unwrap_or(0);
+                                        match c {
+                                            'h' | 'k' => {
+                                                let next_idx = if current_idx == 0 {
+                                                    options.len() - 1
+                                                } else {
+                                                    current_idx - 1
+                                                };
+                                                state.manual_security =
+                                                    options[next_idx].to_string();
+                                            }
+                                            'l' | 'j' => {
+                                                let next_idx = (current_idx + 1) % options.len();
+                                                state.manual_security =
+                                                    options[next_idx].to_string();
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            event::KeyCode::Backspace
+                                if key.modifiers.intersects(
+                                    event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
+                                ) =>
+                            {
+                                match state.manual_input_field {
+                                    0 => {
+                                        if state.manual_ssid_cursor > 0 {
+                                            let chars: Vec<char> =
+                                                state.manual_ssid_input.chars().collect();
+                                            let mut idx = state.manual_ssid_cursor;
+                                            while idx > 0
+                                                && idx <= chars.len()
+                                                && chars[idx - 1].is_whitespace()
+                                            {
+                                                idx -= 1;
+                                            }
+                                            while idx > 0 && !chars[idx - 1].is_whitespace() {
+                                                idx -= 1;
+                                            }
+                                            let start_byte = chars
+                                                .iter()
+                                                .take(idx)
+                                                .map(|c| c.len_utf8())
+                                                .sum::<usize>();
+                                            let end_byte = chars
+                                                .iter()
+                                                .take(state.manual_ssid_cursor)
+                                                .map(|c| c.len_utf8())
+                                                .sum::<usize>();
+                                            state
+                                                .manual_ssid_input
+                                                .replace_range(start_byte..end_byte, "");
+                                            state.manual_ssid_cursor = idx;
+                                        }
+                                    }
+                                    1 => {
+                                        if state.manual_password_cursor > 0 {
+                                            let chars: Vec<char> =
+                                                state.manual_password_input.chars().collect();
+                                            let mut idx = state.manual_password_cursor;
+                                            while idx > 0
+                                                && idx <= chars.len()
+                                                && chars[idx - 1].is_whitespace()
+                                            {
+                                                idx -= 1;
+                                            }
+                                            while idx > 0 && !chars[idx - 1].is_whitespace() {
+                                                idx -= 1;
+                                            }
+                                            let start_byte = chars
+                                                .iter()
+                                                .take(idx)
+                                                .map(|c| c.len_utf8())
+                                                .sum::<usize>();
+                                            let end_byte = chars
+                                                .iter()
+                                                .take(state.manual_password_cursor)
+                                                .map(|c| c.len_utf8())
+                                                .sum::<usize>();
+                                            state
+                                                .manual_password_input
+                                                .replace_range(start_byte..end_byte, "");
+                                            state.manual_password_cursor = idx;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            event::KeyCode::Backspace => match state.manual_input_field {
+                                0 => {
+                                    if state.manual_ssid_cursor > 0 {
+                                        let byte_idx = state
+                                            .manual_ssid_input
+                                            .chars()
+                                            .take(state.manual_ssid_cursor - 1)
+                                            .map(|c| c.len_utf8())
+                                            .sum();
+                                        state.manual_ssid_input.remove(byte_idx);
+                                        state.manual_ssid_cursor -= 1;
+                                    }
+                                }
+                                1 => {
+                                    if state.manual_password_cursor > 0 {
+                                        let byte_idx = state
+                                            .manual_password_input
+                                            .chars()
+                                            .take(state.manual_password_cursor - 1)
+                                            .map(|c| c.len_utf8())
+                                            .sum();
+                                        state.manual_password_input.remove(byte_idx);
+                                        state.manual_password_cursor -= 1;
+                                    }
+                                }
+                                _ => {}
+                            },
+                            event::KeyCode::Left
+                                if key.modifiers.intersects(
+                                    event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
+                                ) =>
+                            {
+                                match state.manual_input_field {
+                                    0 => {
+                                        let chars: Vec<char> =
+                                            state.manual_ssid_input.chars().collect();
+                                        let mut idx = state.manual_ssid_cursor;
+                                        while idx > 0
+                                            && idx <= chars.len()
+                                            && chars[idx - 1].is_whitespace()
+                                        {
+                                            idx -= 1;
+                                        }
+                                        while idx > 0 && !chars[idx - 1].is_whitespace() {
+                                            idx -= 1;
+                                        }
+                                        state.manual_ssid_cursor = idx;
+                                    }
+                                    1 => {
+                                        let chars: Vec<char> =
+                                            state.manual_password_input.chars().collect();
+                                        let mut idx = state.manual_password_cursor;
+                                        while idx > 0
+                                            && idx <= chars.len()
+                                            && chars[idx - 1].is_whitespace()
+                                        {
+                                            idx -= 1;
+                                        }
+                                        while idx > 0 && !chars[idx - 1].is_whitespace() {
+                                            idx -= 1;
+                                        }
+                                        state.manual_password_cursor = idx;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            event::KeyCode::Left => match state.manual_input_field {
+                                0 => {
+                                    if state.manual_ssid_cursor > 0 {
+                                        state.manual_ssid_cursor -= 1;
+                                    }
+                                }
+                                1 => {
+                                    if state.manual_password_cursor > 0 {
+                                        state.manual_password_cursor -= 1;
+                                    }
+                                }
+                                2 => {
+                                    let options =
+                                        ["WPA2-PSK", "WPA3-SAE", "Open", "WPA-PSK", "WEP"];
+                                    let current_idx = options
+                                        .iter()
+                                        .position(|&s| s == state.manual_security)
+                                        .unwrap_or(0);
+                                    let next_idx = if current_idx == 0 {
+                                        options.len() - 1
+                                    } else {
+                                        current_idx - 1
+                                    };
+                                    state.manual_security = options[next_idx].to_string();
+                                }
+                                _ => {}
+                            },
+                            event::KeyCode::Right
+                                if key.modifiers.intersects(
+                                    event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
+                                ) =>
+                            {
+                                match state.manual_input_field {
+                                    0 => {
+                                        let chars: Vec<char> =
+                                            state.manual_ssid_input.chars().collect();
+                                        let mut idx = state.manual_ssid_cursor;
+                                        let len = chars.len();
+                                        while idx < len && !chars[idx].is_whitespace() {
+                                            idx += 1;
+                                        }
+                                        while idx < len && chars[idx].is_whitespace() {
+                                            idx += 1;
+                                        }
+                                        state.manual_ssid_cursor = idx;
+                                    }
+                                    1 => {
+                                        let chars: Vec<char> =
+                                            state.manual_password_input.chars().collect();
+                                        let mut idx = state.manual_password_cursor;
+                                        let len = chars.len();
+                                        while idx < len && !chars[idx].is_whitespace() {
+                                            idx += 1;
+                                        }
+                                        while idx < len && chars[idx].is_whitespace() {
+                                            idx += 1;
+                                        }
+                                        state.manual_password_cursor = idx;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            event::KeyCode::Right => match state.manual_input_field {
+                                0 => {
+                                    if state.manual_ssid_cursor
+                                        < state.manual_ssid_input.chars().count()
+                                    {
+                                        state.manual_ssid_cursor += 1;
+                                    }
+                                }
+                                1 => {
+                                    if state.manual_password_cursor
+                                        < state.manual_password_input.chars().count()
+                                    {
+                                        state.manual_password_cursor += 1;
+                                    }
+                                }
+                                2 => {
+                                    let options =
+                                        ["WPA2-PSK", "WPA3-SAE", "Open", "WPA-PSK", "WEP"];
+                                    let current_idx = options
+                                        .iter()
+                                        .position(|&s| s == state.manual_security)
+                                        .unwrap_or(0);
+                                    let next_idx = (current_idx + 1) % options.len();
+                                    state.manual_security = options[next_idx].to_string();
+                                }
+                                _ => {}
+                            },
+                            event::KeyCode::Home => match state.manual_input_field {
+                                0 => state.manual_ssid_cursor = 0,
+                                1 => state.manual_password_cursor = 0,
+                                _ => {}
+                            },
+                            event::KeyCode::End => match state.manual_input_field {
+                                0 => {
+                                    state.manual_ssid_cursor =
+                                        state.manual_ssid_input.chars().count()
+                                }
+                                1 => {
+                                    state.manual_password_cursor =
+                                        state.manual_password_input.chars().count()
+                                }
+                                _ => {}
+                            },
+                            _ => {}
+                        }
+                    } else if state.show_password_popup {
                         match key.code {
                             event::KeyCode::Enter => {
                                 if let Some(ssid) = state.connecting_to_ssid.take() {
@@ -183,7 +627,8 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                     let (tx, rx) = mpsc::channel(1);
                                     state.connection_result_rx = Some(rx);
 
-                                    let wifi_info = state.wifi_list.iter().find(|w| w.ssid == ssid).cloned();
+                                    let wifi_info =
+                                        state.wifi_list.iter().find(|w| w.ssid == ssid).cloned();
 
                                     tokio::spawn(async move {
                                         if get_connected_ssid().unwrap_or(None).is_some() {
@@ -191,53 +636,94 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                         }
                                         let result = tokio::task::spawn_blocking(move || {
                                             if let Some(info) = wifi_info {
-                                                connect_with_password(&ssid, &password, &info.authentication, &info.encryption)
+                                                connect_with_password(
+                                                    &ssid,
+                                                    &password,
+                                                    &info.authentication,
+                                                    &info.encryption,
+                                                    false,
+                                                )
                                             } else {
-                                                connect_with_password(&ssid, &password, "WPA2-PSK", "AES")
+                                                connect_with_password(
+                                                    &ssid, &password, "WPA2-PSK", "AES", false,
+                                                )
                                             }
-                                        }).await.unwrap();
+                                        })
+                                        .await
+                                        .unwrap();
                                         let _ = tx.send(result).await;
                                     });
                                 }
                                 state.show_password_popup = false;
                                 state.password_input.clear();
                             }
-                            event::KeyCode::Char('[') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                            event::KeyCode::Char('[')
+                                if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                            {
                                 state.show_password_popup = false;
                                 state.password_input.clear();
                             }
                             event::KeyCode::Char(c) => {
-                                let byte_idx = state.password_input.chars().take(state.password_cursor).map(|c| c.len_utf8()).sum();
+                                let byte_idx = state
+                                    .password_input
+                                    .chars()
+                                    .take(state.password_cursor)
+                                    .map(|c| c.len_utf8())
+                                    .sum();
                                 state.password_input.insert(byte_idx, c);
                                 state.password_cursor += 1;
                             }
-                            event::KeyCode::Backspace if key.modifiers.intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) => {
+                            event::KeyCode::Backspace
+                                if key.modifiers.intersects(
+                                    event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
+                                ) =>
+                            {
                                 if state.password_cursor > 0 {
                                     let chars: Vec<char> = state.password_input.chars().collect();
                                     let mut idx = state.password_cursor;
-                                    while idx > 0 && idx <= chars.len() && chars[idx - 1].is_whitespace() {
+                                    while idx > 0
+                                        && idx <= chars.len()
+                                        && chars[idx - 1].is_whitespace()
+                                    {
                                         idx -= 1;
                                     }
                                     while idx > 0 && !chars[idx - 1].is_whitespace() {
                                         idx -= 1;
                                     }
-                                    let start_byte = chars.iter().take(idx).map(|c| c.len_utf8()).sum::<usize>();
-                                    let end_byte = chars.iter().take(state.password_cursor).map(|c| c.len_utf8()).sum::<usize>();
+                                    let start_byte =
+                                        chars.iter().take(idx).map(|c| c.len_utf8()).sum::<usize>();
+                                    let end_byte = chars
+                                        .iter()
+                                        .take(state.password_cursor)
+                                        .map(|c| c.len_utf8())
+                                        .sum::<usize>();
                                     state.password_input.replace_range(start_byte..end_byte, "");
                                     state.password_cursor = idx;
                                 }
                             }
                             event::KeyCode::Backspace => {
                                 if state.password_cursor > 0 {
-                                    let byte_idx = state.password_input.chars().take(state.password_cursor - 1).map(|c| c.len_utf8()).sum();
+                                    let byte_idx = state
+                                        .password_input
+                                        .chars()
+                                        .take(state.password_cursor - 1)
+                                        .map(|c| c.len_utf8())
+                                        .sum();
                                     state.password_input.remove(byte_idx);
                                     state.password_cursor -= 1;
                                 }
                             }
-                            event::KeyCode::Left if key.modifiers.intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) => {
+                            event::KeyCode::Left
+                                if key.modifiers.intersects(
+                                    event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
+                                ) =>
+                            {
                                 let chars: Vec<char> = state.password_input.chars().collect();
                                 let mut idx = state.password_cursor;
-                                while idx > 0 && idx <= chars.len() && chars[idx - 1].is_whitespace() {
+                                while idx > 0
+                                    && idx <= chars.len()
+                                    && chars[idx - 1].is_whitespace()
+                                {
                                     idx -= 1;
                                 }
                                 while idx > 0 && !chars[idx - 1].is_whitespace() {
@@ -250,7 +736,11 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                     state.password_cursor -= 1;
                                 }
                             }
-                            event::KeyCode::Right if key.modifiers.intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) => {
+                            event::KeyCode::Right
+                                if key.modifiers.intersects(
+                                    event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
+                                ) =>
+                            {
                                 let chars: Vec<char> = state.password_input.chars().collect();
                                 let mut idx = state.password_cursor;
                                 let len = chars.len();
@@ -284,7 +774,9 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             event::KeyCode::Esc => {
                                 state.is_searching = false;
                             }
-                            event::KeyCode::Char('[') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                            event::KeyCode::Char('[')
+                                if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                            {
                                 state.is_searching = false;
                             }
                             event::KeyCode::Enter => {
@@ -294,23 +786,40 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 }
                             }
                             event::KeyCode::Char(c) => {
-                                let byte_idx = state.search_input.chars().take(state.search_cursor).map(|c| c.len_utf8()).sum();
+                                let byte_idx = state
+                                    .search_input
+                                    .chars()
+                                    .take(state.search_cursor)
+                                    .map(|c| c.len_utf8())
+                                    .sum();
                                 state.search_input.insert(byte_idx, c);
                                 state.search_cursor += 1;
                                 state.update_filtered_list();
                             }
-                            event::KeyCode::Backspace if key.modifiers.intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) => {
+                            event::KeyCode::Backspace
+                                if key.modifiers.intersects(
+                                    event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
+                                ) =>
+                            {
                                 if state.search_cursor > 0 {
                                     let chars: Vec<char> = state.search_input.chars().collect();
                                     let mut idx = state.search_cursor;
-                                    while idx > 0 && idx <= chars.len() && chars[idx - 1].is_whitespace() {
+                                    while idx > 0
+                                        && idx <= chars.len()
+                                        && chars[idx - 1].is_whitespace()
+                                    {
                                         idx -= 1;
                                     }
                                     while idx > 0 && !chars[idx - 1].is_whitespace() {
                                         idx -= 1;
                                     }
-                                    let start_byte = chars.iter().take(idx).map(|c| c.len_utf8()).sum::<usize>();
-                                    let end_byte = chars.iter().take(state.search_cursor).map(|c| c.len_utf8()).sum::<usize>();
+                                    let start_byte =
+                                        chars.iter().take(idx).map(|c| c.len_utf8()).sum::<usize>();
+                                    let end_byte = chars
+                                        .iter()
+                                        .take(state.search_cursor)
+                                        .map(|c| c.len_utf8())
+                                        .sum::<usize>();
                                     state.search_input.replace_range(start_byte..end_byte, "");
                                     state.search_cursor = idx;
                                     state.update_filtered_list();
@@ -318,16 +827,28 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             }
                             event::KeyCode::Backspace => {
                                 if state.search_cursor > 0 {
-                                    let byte_idx = state.search_input.chars().take(state.search_cursor - 1).map(|c| c.len_utf8()).sum();
+                                    let byte_idx = state
+                                        .search_input
+                                        .chars()
+                                        .take(state.search_cursor - 1)
+                                        .map(|c| c.len_utf8())
+                                        .sum();
                                     state.search_input.remove(byte_idx);
                                     state.search_cursor -= 1;
                                     state.update_filtered_list();
                                 }
                             }
-                            event::KeyCode::Left if key.modifiers.intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) => {
+                            event::KeyCode::Left
+                                if key.modifiers.intersects(
+                                    event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
+                                ) =>
+                            {
                                 let chars: Vec<char> = state.search_input.chars().collect();
                                 let mut idx = state.search_cursor;
-                                while idx > 0 && idx <= chars.len() && chars[idx - 1].is_whitespace() {
+                                while idx > 0
+                                    && idx <= chars.len()
+                                    && chars[idx - 1].is_whitespace()
+                                {
                                     idx -= 1;
                                 }
                                 while idx > 0 && !chars[idx - 1].is_whitespace() {
@@ -340,7 +861,11 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                     state.search_cursor -= 1;
                                 }
                             }
-                            event::KeyCode::Right if key.modifiers.intersects(event::KeyModifiers::CONTROL | event::KeyModifiers::ALT) => {
+                            event::KeyCode::Right
+                                if key.modifiers.intersects(
+                                    event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
+                                ) =>
+                            {
                                 let chars: Vec<char> = state.search_input.chars().collect();
                                 let mut idx = state.search_cursor;
                                 let len = chars.len();
@@ -370,6 +895,10 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             event::KeyCode::Char('/') => {
                                 state.is_searching = true;
                             }
+                            event::KeyCode::Char('n') => {
+                                state.show_manual_add_popup = true;
+                                state.manual_input_field = 0;
+                            }
                             event::KeyCode::Esc => {
                                 if !state.search_input.is_empty() {
                                     state.search_input.clear();
@@ -377,7 +906,9 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 }
                             }
                             event::KeyCode::Char('q') => break,
-                            event::KeyCode::Char('[') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                            event::KeyCode::Char('[')
+                                if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                            {
                                 if !state.search_input.is_empty() {
                                     state.search_input.clear();
                                     state.update_filtered_list();
@@ -385,46 +916,34 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             }
                             event::KeyCode::Char('j') | event::KeyCode::Down => state.next(),
                             event::KeyCode::Char('k') | event::KeyCode::Up => state.previous(),
+                            event::KeyCode::Char('g') => state.go_to_top(),
+                            event::KeyCode::Char('G') => state.go_to_bottom(),
                             event::KeyCode::Enter => {
                                 if let Some(selected) = state.l_state.selected()
-                                    && let Some(wifi) = state.filtered_wifi_list.get(selected).cloned() {
-                                        let is_connected = if let Some(connected_ssid) = &state.connected_ssid {
+                                    && let Some(wifi) =
+                                        state.filtered_wifi_list.get(selected).cloned()
+                                {
+                                    let is_connected =
+                                        if let Some(connected_ssid) = &state.connected_ssid {
                                             wifi.ssid == *connected_ssid
                                         } else {
                                             false
                                         };
 
-                                        if is_connected {
-                                            let (tx, rx) = mpsc::channel(1);
-                                            state.connection_result_rx = Some(rx);
-                                            tokio::spawn(async move {
-                                                let result = tokio::task::spawn_blocking(disconnect).await.unwrap();
-                                                let _ = tx.send(result).await;
-                                            });
-                                        } else if wifi.authentication != "Open" {
-                                            // Check if profile exists
-                                            let saved_profiles = get_saved_profiles().unwrap_or_default();
-                                            if saved_profiles.contains(&wifi.ssid) {
-                                                state.is_connecting = true;
-                                                state.target_ssid = Some(wifi.ssid.clone());
-                                                state.connection_start_time = Some(Instant::now());
-                                                let ssid = wifi.ssid.clone();
-                                                let (tx, rx) = mpsc::channel(1);
-                                                state.connection_result_rx = Some(rx);
-
-                                                tokio::spawn(async move {
-                                                    if get_connected_ssid().unwrap_or(None).is_some() {
-                                                        let _ = tokio::task::spawn_blocking(disconnect).await;
-                                                    }
-                                                    let result = tokio::task::spawn_blocking(move || connect_profile(&ssid)).await.unwrap();
-                                                    let _ = tx.send(result).await;
-                                                });
-                                            } else {
-                                                state.show_password_popup = true;
-                                                state.password_cursor = 0;
-                                                state.connecting_to_ssid = Some(wifi.ssid.clone());
-                                            }
-                                        } else {
+                                    if is_connected {
+                                        let (tx, rx) = mpsc::channel(1);
+                                        state.connection_result_rx = Some(rx);
+                                        tokio::spawn(async move {
+                                            let result = tokio::task::spawn_blocking(disconnect)
+                                                .await
+                                                .unwrap();
+                                            let _ = tx.send(result).await;
+                                        });
+                                    } else if wifi.authentication != "Open" {
+                                        // Check if profile exists
+                                        let saved_profiles =
+                                            get_saved_profiles().unwrap_or_default();
+                                        if saved_profiles.contains(&wifi.ssid) {
                                             state.is_connecting = true;
                                             state.target_ssid = Some(wifi.ssid.clone());
                                             state.connection_start_time = Some(Instant::now());
@@ -434,13 +953,44 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
 
                                             tokio::spawn(async move {
                                                 if get_connected_ssid().unwrap_or(None).is_some() {
-                                                    let _ = tokio::task::spawn_blocking(disconnect).await;
+                                                    let _ = tokio::task::spawn_blocking(disconnect)
+                                                        .await;
                                                 }
-                                                let result = tokio::task::spawn_blocking(move || connect_open(&ssid)).await.unwrap();
+                                                let result =
+                                                    tokio::task::spawn_blocking(move || {
+                                                        connect_profile(&ssid)
+                                                    })
+                                                    .await
+                                                    .unwrap();
                                                 let _ = tx.send(result).await;
                                             });
+                                        } else {
+                                            state.show_password_popup = true;
+                                            state.password_cursor = 0;
+                                            state.connecting_to_ssid = Some(wifi.ssid.clone());
                                         }
+                                    } else {
+                                        state.is_connecting = true;
+                                        state.target_ssid = Some(wifi.ssid.clone());
+                                        state.connection_start_time = Some(Instant::now());
+                                        let ssid = wifi.ssid.clone();
+                                        let (tx, rx) = mpsc::channel(1);
+                                        state.connection_result_rx = Some(rx);
+
+                                        tokio::spawn(async move {
+                                            if get_connected_ssid().unwrap_or(None).is_some() {
+                                                let _ =
+                                                    tokio::task::spawn_blocking(disconnect).await;
+                                            }
+                                            let result = tokio::task::spawn_blocking(move || {
+                                                connect_open(&ssid, false)
+                                            })
+                                            .await
+                                            .unwrap();
+                                            let _ = tx.send(result).await;
+                                        });
                                     }
+                                }
                             }
                             event::KeyCode::Char('r') => {
                                 state.is_refreshing_networks = true;
@@ -454,41 +1004,51 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                         let networks = get_wifi_networks()?;
                                         let connected = get_connected_ssid()?;
                                         Ok((networks, connected))
-                                    }).await.unwrap();
+                                    })
+                                    .await
+                                    .unwrap();
                                     let _ = tx.send(result).await;
                                 });
                             }
                             event::KeyCode::Char('a') => {
                                 if let Some(selected) = state.l_state.selected()
-                                    && let Some(wifi) = state.filtered_wifi_list.get(selected).cloned()
-                                        && wifi.is_saved {
-                                            let ssid = wifi.ssid.clone();
-                                            let auto_connect = !wifi.auto_connect;
-                                            let (tx, rx) = mpsc::channel(1);
-                                            state.connection_result_rx = Some(rx);
+                                    && let Some(wifi) =
+                                        state.filtered_wifi_list.get(selected).cloned()
+                                    && wifi.is_saved
+                                {
+                                    let ssid = wifi.ssid.clone();
+                                    let auto_connect = !wifi.auto_connect;
+                                    let (tx, rx) = mpsc::channel(1);
+                                    state.connection_result_rx = Some(rx);
 
-                                            tokio::spawn(async move {
-                                                let result = tokio::task::spawn_blocking(move || {
-                                                    set_auto_connect(&ssid, auto_connect)
-                                                }).await.unwrap();
-                                                let _ = tx.send(result).await;
-                                            });
-                                        }
+                                    tokio::spawn(async move {
+                                        let result = tokio::task::spawn_blocking(move || {
+                                            set_auto_connect(&ssid, auto_connect)
+                                        })
+                                        .await
+                                        .unwrap();
+                                        let _ = tx.send(result).await;
+                                    });
+                                }
                             }
                             event::KeyCode::Char('f') => {
                                 if let Some(selected) = state.l_state.selected()
-                                    && let Some(wifi) = state.filtered_wifi_list.get(selected).cloned() {
-                                        let ssid = wifi.ssid.clone();
-                                        let (tx, rx) = mpsc::channel(1);
-                                        state.connection_result_rx = Some(rx);
+                                    && let Some(wifi) =
+                                        state.filtered_wifi_list.get(selected).cloned()
+                                {
+                                    let ssid = wifi.ssid.clone();
+                                    let (tx, rx) = mpsc::channel(1);
+                                    state.connection_result_rx = Some(rx);
 
-                                        tokio::spawn(async move {
-                                            let result = tokio::task::spawn_blocking(move || {
-                                                forget_network(&ssid)
-                                            }).await.unwrap();
-                                            let _ = tx.send(result).await;
-                                        });
-                                    }
+                                    tokio::spawn(async move {
+                                        let result = tokio::task::spawn_blocking(move || {
+                                            forget_network(&ssid)
+                                        })
+                                        .await
+                                        .unwrap();
+                                        let _ = tx.send(result).await;
+                                    });
+                                }
                             }
                             _ => {}
                         }
