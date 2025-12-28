@@ -6,6 +6,7 @@
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/sohamw03/wifui/release.yml)
 ![WinGet Package Version](https://img.shields.io/winget/v/sohamw03.wifui)
 [![Scoop Version](https://img.shields.io/scoop/v/wifui?bucket=https%3A%2F%2Fgithub.com%2Fsohamw03%2FScoop-Bucket)](https://github.com/sohamw03/Scoop-Bucket)
+[![Chocolatey Version](https://img.shields.io/chocolatey/v/wifui?link=https%3A%2F%2Fcommunity.chocolatey.org%2Fpackages%2Fwifui)](https://community.chocolatey.org/packages/wifui)
 [![Crates.io Version](https://img.shields.io/crates/v/wifui)](https://crates.io/crates/wifui)
 ![GitHub Repo stars](https://img.shields.io/github/stars/sohamw03/wifui)
 
