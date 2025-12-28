@@ -32,14 +32,20 @@
 winget install wifui
 ```
 
-### Scoop
+### [Scoop](https://scoop.sh/#/apps?q=%22https%3A%2F%2Fgithub.com%2Fsohamw03%2FScoop-Bucket%22&o=false)
 
 ```sh
 scoop bucket add sohamw03 https://github.com/sohamw03/Scoop-Bucket
 scoop install wifui
 ```
 
-### Crates.io
+### [Chocolatey](https://community.chocolatey.org/packages/wifui)
+
+```sh
+choco install wifui
+```
+
+### [Crates.io](https://crates.io/crates/wifui)
 
 ```sh
 cargo install wifui
