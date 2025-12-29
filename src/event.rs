@@ -86,6 +86,40 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
             state.last_refresh = Instant::now();
         }
 
+        // Check for connection events
+        if let Some(rx) = &mut state.connection_event_rx {
+            while let Ok(event) = rx.try_recv() {
+                match event {
+                    crate::wifi::ConnectionEvent::Connected(ssid) => {
+                        if let Some(target) = &state.target_ssid {
+                            if *target == ssid {
+                                state.is_connecting = false;
+                                state.target_ssid = None;
+                                state.connection_start_time = None;
+                                state.refresh_burst = 5;
+                            }
+                        }
+                    }
+                    crate::wifi::ConnectionEvent::Disconnected(_) => {
+                        state.refresh_burst = 5;
+                    }
+                    crate::wifi::ConnectionEvent::Failed {
+                        ssid, reason_str, ..
+                    } => {
+                        if let Some(target) = &state.target_ssid {
+                            if *target == ssid {
+                                state.is_connecting = false;
+                                state.target_ssid = None;
+                                state.connection_start_time = None;
+                                state.error_message =
+                                    Some(format!("Connection failed: {}", reason_str));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Check if connected to target SSID
         if state.is_connecting {
             state.loading_frame = state.loading_frame.wrapping_add(1);
@@ -99,14 +133,15 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                     state.connection_start_time = None;
                 }
 
-                // Check for timeout (e.g. 20 seconds)
+                // Check for timeout (e.g. 60 seconds)
                 if let Some(start_time) = state.connection_start_time
-                    && start_time.elapsed() > Duration::from_secs(20)
+                    && start_time.elapsed() > Duration::from_secs(60)
                 {
                     state.is_connecting = false;
                     state.target_ssid = None;
                     state.connection_start_time = None;
-                    state.error_message = Some("Connection timed out".to_string());
+                    state.error_message =
+                        Some("Connection timed out (No response from OS)".to_string());
                 }
             } else {
                 // If no target SSID is set but is_connecting is true, it might be a disconnect or forget operation

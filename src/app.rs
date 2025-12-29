@@ -1,11 +1,11 @@
 use crate::{
     input::InputState,
-    wifi::{WifiInfo, get_connected_ssid},
+    wifi::{ConnectionEvent, WifiInfo, WifiListener, get_connected_ssid, start_wifi_listener},
 };
 use color_eyre::eyre::Result;
 use ratatui::widgets::ListState;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, UnboundedReceiver};
 
 #[derive(Debug)]
 pub struct AppState {
@@ -37,10 +37,16 @@ pub struct AppState {
     pub manual_security: String,
     pub manual_hidden: bool,
     pub manual_input_field: usize,
+    #[allow(dead_code)]
+    pub wifi_listener: Option<WifiListener>,
+    pub connection_event_rx: Option<UnboundedReceiver<ConnectionEvent>>,
 }
 
 impl AppState {
     pub fn new(wifi_list: Vec<WifiInfo>, show_key_logger: bool) -> AppState {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let wifi_listener = start_wifi_listener(tx).ok();
+
         AppState {
             filtered_wifi_list: wifi_list.clone(),
             wifi_list: wifi_list.clone(),
@@ -70,6 +76,8 @@ impl AppState {
             manual_security: "WPA2-PSK".to_string(),
             manual_hidden: false,
             manual_input_field: 0,
+            wifi_listener,
+            connection_event_rx: Some(rx),
         }
     }
 

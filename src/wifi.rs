@@ -1,5 +1,6 @@
 use color_eyre::eyre::{Result, eyre};
 use std::collections::HashMap;
+use tokio::sync::mpsc::UnboundedSender;
 use windows::{
     Win32::{
         Foundation::{ERROR_SUCCESS, HANDLE},
@@ -22,6 +23,180 @@ pub struct WifiInfo {
     pub channel: u32,
     pub frequency: u32,
     pub link_speed: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ConnectionEvent {
+    Connected(String),
+    #[allow(dead_code)]
+    Disconnected(String),
+    Failed {
+        ssid: String,
+        #[allow(dead_code)]
+        reason_code: u32,
+        reason_str: String,
+    },
+}
+
+#[derive(Debug)]
+pub struct WifiListener {
+    handle: HANDLE,
+    context: *mut std::ffi::c_void,
+}
+
+unsafe impl Send for WifiListener {}
+unsafe impl Sync for WifiListener {}
+
+impl Drop for WifiListener {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = WlanRegisterNotification(
+                self.handle,
+                WLAN_NOTIFICATION_SOURCE_NONE,
+                true,
+                None,
+                None,
+                None,
+                None,
+            );
+            let _ = WlanCloseHandle(self.handle, None);
+            let _ = Box::from_raw(self.context as *mut UnboundedSender<ConnectionEvent>);
+        }
+    }
+}
+
+unsafe extern "system" fn notification_callback(
+    data: *mut L2_NOTIFICATION_DATA,
+    context: *mut std::ffi::c_void,
+) {
+    if data.is_null() || context.is_null() {
+        return;
+    }
+
+    // SAFETY: We checked for null above.
+    // The context is a pointer to UnboundedSender<ConnectionEvent> created in start_wifi_listener
+    let (data, sender) = unsafe {
+        (
+            &*data,
+            &*(context as *const UnboundedSender<ConnectionEvent>),
+        )
+    };
+
+    if data.NotificationSource != WLAN_NOTIFICATION_SOURCE_ACM {
+        return;
+    }
+
+    if data.NotificationCode == wlan_notification_acm_connection_complete.0 as u32
+        || data.NotificationCode == wlan_notification_acm_connection_attempt_fail.0 as u32
+        || data.NotificationCode == wlan_notification_acm_disconnected.0 as u32
+    {
+        if data.dwDataSize < std::mem::size_of::<WLAN_CONNECTION_NOTIFICATION_DATA>() as u32 {
+            return;
+        }
+
+        // SAFETY: The documentation guarantees pData points to WLAN_CONNECTION_NOTIFICATION_DATA
+        // for these notification codes, and we checked the size above.
+        let conn_data = unsafe { &*(data.pData as *const WLAN_CONNECTION_NOTIFICATION_DATA) };
+
+        // Extract SSID
+        let ssid_len = conn_data.dot11Ssid.uSSIDLength as usize;
+        let ssid_bytes = &conn_data.dot11Ssid.ucSSID[..ssid_len];
+        let ssid = String::from_utf8_lossy(ssid_bytes).to_string();
+
+        if data.NotificationCode == wlan_notification_acm_connection_complete.0 as u32 {
+            let _ = sender.send(ConnectionEvent::Connected(ssid));
+        } else if data.NotificationCode == wlan_notification_acm_disconnected.0 as u32 {
+            let _ = sender.send(ConnectionEvent::Disconnected(ssid));
+        } else if data.NotificationCode == wlan_notification_acm_connection_attempt_fail.0 as u32 {
+            let reason_code = conn_data.wlanReasonCode;
+            let reason_str = match reason_code {
+                // Success / Unknown
+                v if v == WLAN_REASON_CODE_SUCCESS => "Success".to_string(),
+                v if v == WLAN_REASON_CODE_UNKNOWN => "Unknown Failure".to_string(),
+
+                // Network / Profile Compatibility
+                v if v == WLAN_REASON_CODE_NETWORK_NOT_COMPATIBLE => {
+                    "Network Not Compatible".to_string()
+                }
+                v if v == WLAN_REASON_CODE_PROFILE_NOT_COMPATIBLE => {
+                    "Profile Not Compatible".to_string()
+                }
+
+                // Association
+                v if v == WLAN_REASON_CODE_ASSOCIATION_FAILURE => "Association Failed".to_string(),
+                v if v == WLAN_REASON_CODE_ASSOCIATION_TIMEOUT => "Association Timeout".to_string(),
+                v if v == WLAN_REASON_CODE_PRE_SECURITY_FAILURE => {
+                    "Pre-Security Failure".to_string()
+                }
+                v if v == WLAN_REASON_CODE_START_SECURITY_FAILURE => {
+                    "Start Security Failure".to_string()
+                }
+                v if v == WLAN_REASON_CODE_SECURITY_FAILURE => "Security Failure".to_string(),
+                v if v == WLAN_REASON_CODE_SECURITY_TIMEOUT => "Security Timeout".to_string(),
+                v if v == WLAN_REASON_CODE_ROAMING_FAILURE => "Roaming Failure".to_string(),
+                v if v == WLAN_REASON_CODE_ROAMING_SECURITY_FAILURE => {
+                    "Roaming Security Failure".to_string()
+                }
+                v if v == WLAN_REASON_CODE_ADHOC_SECURITY_FAILURE => {
+                    "Ad-hoc Security Failure".to_string()
+                }
+
+                // Driver / IHV
+                v if v == WLAN_REASON_CODE_DRIVER_DISCONNECTED => {
+                    "Driver Disconnected (Possible Wrong Password)".to_string()
+                }
+                v if v == WLAN_REASON_CODE_DRIVER_OPERATION_FAILURE => {
+                    "Driver Operation Failure".to_string()
+                }
+                v if v == WLAN_REASON_CODE_IHV_NOT_AVAILABLE => "IHV Not Available".to_string(),
+                v if v == WLAN_REASON_CODE_IHV_NOT_RESPONDING => "IHV Not Responding".to_string(),
+
+                // Manual mappings for missing constants (MSM Security)
+                327684 => "Incorrect Password".to_string(), // WLAN_REASON_CODE_MSM_SECURITY_BAD_PASSPHRASE (0x00050004)
+                294917 => "Incorrect Password (Key Exchange Timeout)".to_string(), // WLAN_REASON_CODE_MSMSEC_AUTH_SUCCESS_TIMEOUT (0x00048005) - Often Wrong Password
+                294932 => "Authentication Timeout (Possible Wrong Password)".to_string(), // 0x48014 - Timeout waiting for response
+                524294 => "MSM Security Missing".to_string(), // WLAN_REASON_CODE_MSM_SECURITY_MISSING
+
+                _ => format!("Reason Code: {}", reason_code),
+            };
+
+            let _ = sender.send(ConnectionEvent::Failed {
+                ssid,
+                reason_code,
+                reason_str,
+            });
+        }
+    }
+}
+
+pub fn start_wifi_listener(sender: UnboundedSender<ConnectionEvent>) -> Result<WifiListener> {
+    let (handle, _) = get_wlan_handle()?;
+
+    // Box the sender to pass as context
+    let context = Box::into_raw(Box::new(sender));
+
+    unsafe {
+        let result = WlanRegisterNotification(
+            handle,
+            WLAN_NOTIFICATION_SOURCE_ACM,
+            false,
+            Some(notification_callback),
+            Some(context as *mut std::ffi::c_void),
+            None,
+            None,
+        );
+
+        if result != ERROR_SUCCESS.0 {
+            let _ = Box::from_raw(context as *mut UnboundedSender<ConnectionEvent>); // Cleanup
+            WlanCloseHandle(handle, None);
+            return Err(eyre!("Failed to register notification: {}", result));
+        }
+    }
+
+    Ok(WifiListener {
+        handle,
+        context: context as *mut std::ffi::c_void,
+    })
 }
 
 // Helper to open WLAN handle
