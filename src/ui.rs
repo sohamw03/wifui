@@ -611,7 +611,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .border_type(BorderType::Rounded)
             .title(" Add Network ")
             .title_alignment(Alignment::Center)
-            .style(Style::default().fg(theme::CYAN));
+            .style(Style::default().fg(theme::CYAN).bg(theme::BACKGROUND));
 
         frame.render_widget(block.clone(), popup_area);
 
@@ -638,7 +638,8 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .title(" SSID ")
-            .border_style(ssid_style);
+            .border_style(ssid_style)
+            .style(Style::default().bg(theme::BACKGROUND));
 
         // SSID Cursor Logic
         let max_width_ssid = (layout[0].width - 2) as usize;
@@ -692,7 +693,8 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .title(" Password ")
-            .border_style(pass_style);
+            .border_style(pass_style)
+            .style(Style::default().bg(theme::BACKGROUND));
 
         // Password Cursor Logic
         let max_width_pass = (layout[1].width - 2) as usize;
@@ -746,7 +748,8 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .title(" Security ")
-            .border_style(sec_style);
+            .border_style(sec_style)
+            .style(Style::default().bg(theme::BACKGROUND));
         let sec_para = Paragraph::new(format!(" < {} > ", state.manual_security))
             .block(sec_block)
             .alignment(Alignment::Center);
