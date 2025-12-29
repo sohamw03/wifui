@@ -210,8 +210,6 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 state.manual_ssid_input.clear();
                                 state.manual_password_input.clear();
                                 state.manual_input_field = 0;
-                                state.manual_ssid_cursor = 0;
-                                state.manual_password_cursor = 0;
                             }
                             event::KeyCode::Char('[')
                                 if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
@@ -219,16 +217,14 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 let mut cleared = false;
                                 match state.manual_input_field {
                                     0 => {
-                                        if !state.manual_ssid_input.is_empty() {
+                                        if !state.manual_ssid_input.value.is_empty() {
                                             state.manual_ssid_input.clear();
-                                            state.manual_ssid_cursor = 0;
                                             cleared = true;
                                         }
                                     }
                                     1 => {
-                                        if !state.manual_password_input.is_empty() {
+                                        if !state.manual_password_input.value.is_empty() {
                                             state.manual_password_input.clear();
-                                            state.manual_password_cursor = 0;
                                             cleared = true;
                                         }
                                     }
@@ -240,8 +236,6 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                     state.manual_ssid_input.clear();
                                     state.manual_password_input.clear();
                                     state.manual_input_field = 0;
-                                    state.manual_ssid_cursor = 0;
-                                    state.manual_password_cursor = 0;
                                 }
                             }
                             event::KeyCode::Tab | event::KeyCode::Down => {
@@ -259,13 +253,14 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                     3 => state.manual_hidden = !state.manual_hidden,
                                     4 => {
                                         // Connect
-                                        if !state.manual_ssid_input.is_empty() {
+                                        if !state.manual_ssid_input.value.is_empty() {
                                             state.is_connecting = true;
                                             state.target_ssid =
-                                                Some(state.manual_ssid_input.clone());
+                                                Some(state.manual_ssid_input.value.clone());
                                             state.connection_start_time = Some(Instant::now());
-                                            let ssid = state.manual_ssid_input.clone();
-                                            let password = state.manual_password_input.clone();
+                                            let ssid = state.manual_ssid_input.value.clone();
+                                            let password =
+                                                state.manual_password_input.value.clone();
                                             let security = state.manual_security.clone();
                                             let hidden = state.manual_hidden;
 
@@ -306,8 +301,6 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                             state.show_manual_add_popup = false;
                                             state.manual_ssid_input.clear();
                                             state.manual_password_input.clear();
-                                            state.manual_ssid_cursor = 0;
-                                            state.manual_password_cursor = 0;
                                         }
                                     }
                                     5 => {
@@ -315,8 +308,6 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                         state.show_manual_add_popup = false;
                                         state.manual_ssid_input.clear();
                                         state.manual_password_input.clear();
-                                        state.manual_ssid_cursor = 0;
-                                        state.manual_password_cursor = 0;
                                     }
                                     _ => {}
                                 }
@@ -326,26 +317,8 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             }
                             event::KeyCode::Char(c) => {
                                 match state.manual_input_field {
-                                    0 => {
-                                        let byte_idx = state
-                                            .manual_ssid_input
-                                            .chars()
-                                            .take(state.manual_ssid_cursor)
-                                            .map(|c| c.len_utf8())
-                                            .sum();
-                                        state.manual_ssid_input.insert(byte_idx, c);
-                                        state.manual_ssid_cursor += 1;
-                                    }
-                                    1 => {
-                                        let byte_idx = state
-                                            .manual_password_input
-                                            .chars()
-                                            .take(state.manual_password_cursor)
-                                            .map(|c| c.len_utf8())
-                                            .sum();
-                                        state.manual_password_input.insert(byte_idx, c);
-                                        state.manual_password_cursor += 1;
-                                    }
+                                    0 => state.manual_ssid_input.insert(c),
+                                    1 => state.manual_password_input.insert(c),
                                     2 => {
                                         // Handle h/j/k/l for Security field
                                         let options =
@@ -381,94 +354,14 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 ) =>
                             {
                                 match state.manual_input_field {
-                                    0 => {
-                                        if state.manual_ssid_cursor > 0 {
-                                            let chars: Vec<char> =
-                                                state.manual_ssid_input.chars().collect();
-                                            let mut idx = state.manual_ssid_cursor;
-                                            while idx > 0
-                                                && idx <= chars.len()
-                                                && chars[idx - 1].is_whitespace()
-                                            {
-                                                idx -= 1;
-                                            }
-                                            while idx > 0 && !chars[idx - 1].is_whitespace() {
-                                                idx -= 1;
-                                            }
-                                            let start_byte = chars
-                                                .iter()
-                                                .take(idx)
-                                                .map(|c| c.len_utf8())
-                                                .sum::<usize>();
-                                            let end_byte = chars
-                                                .iter()
-                                                .take(state.manual_ssid_cursor)
-                                                .map(|c| c.len_utf8())
-                                                .sum::<usize>();
-                                            state
-                                                .manual_ssid_input
-                                                .replace_range(start_byte..end_byte, "");
-                                            state.manual_ssid_cursor = idx;
-                                        }
-                                    }
-                                    1 => {
-                                        if state.manual_password_cursor > 0 {
-                                            let chars: Vec<char> =
-                                                state.manual_password_input.chars().collect();
-                                            let mut idx = state.manual_password_cursor;
-                                            while idx > 0
-                                                && idx <= chars.len()
-                                                && chars[idx - 1].is_whitespace()
-                                            {
-                                                idx -= 1;
-                                            }
-                                            while idx > 0 && !chars[idx - 1].is_whitespace() {
-                                                idx -= 1;
-                                            }
-                                            let start_byte = chars
-                                                .iter()
-                                                .take(idx)
-                                                .map(|c| c.len_utf8())
-                                                .sum::<usize>();
-                                            let end_byte = chars
-                                                .iter()
-                                                .take(state.manual_password_cursor)
-                                                .map(|c| c.len_utf8())
-                                                .sum::<usize>();
-                                            state
-                                                .manual_password_input
-                                                .replace_range(start_byte..end_byte, "");
-                                            state.manual_password_cursor = idx;
-                                        }
-                                    }
+                                    0 => state.manual_ssid_input.backspace_word(),
+                                    1 => state.manual_password_input.backspace_word(),
                                     _ => {}
                                 }
                             }
                             event::KeyCode::Backspace => match state.manual_input_field {
-                                0 => {
-                                    if state.manual_ssid_cursor > 0 {
-                                        let byte_idx = state
-                                            .manual_ssid_input
-                                            .chars()
-                                            .take(state.manual_ssid_cursor - 1)
-                                            .map(|c| c.len_utf8())
-                                            .sum();
-                                        state.manual_ssid_input.remove(byte_idx);
-                                        state.manual_ssid_cursor -= 1;
-                                    }
-                                }
-                                1 => {
-                                    if state.manual_password_cursor > 0 {
-                                        let byte_idx = state
-                                            .manual_password_input
-                                            .chars()
-                                            .take(state.manual_password_cursor - 1)
-                                            .map(|c| c.len_utf8())
-                                            .sum();
-                                        state.manual_password_input.remove(byte_idx);
-                                        state.manual_password_cursor -= 1;
-                                    }
-                                }
+                                0 => state.manual_ssid_input.backspace(),
+                                1 => state.manual_password_input.backspace(),
                                 _ => {}
                             },
                             event::KeyCode::Left
@@ -477,50 +370,14 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 ) =>
                             {
                                 match state.manual_input_field {
-                                    0 => {
-                                        let chars: Vec<char> =
-                                            state.manual_ssid_input.chars().collect();
-                                        let mut idx = state.manual_ssid_cursor;
-                                        while idx > 0
-                                            && idx <= chars.len()
-                                            && chars[idx - 1].is_whitespace()
-                                        {
-                                            idx -= 1;
-                                        }
-                                        while idx > 0 && !chars[idx - 1].is_whitespace() {
-                                            idx -= 1;
-                                        }
-                                        state.manual_ssid_cursor = idx;
-                                    }
-                                    1 => {
-                                        let chars: Vec<char> =
-                                            state.manual_password_input.chars().collect();
-                                        let mut idx = state.manual_password_cursor;
-                                        while idx > 0
-                                            && idx <= chars.len()
-                                            && chars[idx - 1].is_whitespace()
-                                        {
-                                            idx -= 1;
-                                        }
-                                        while idx > 0 && !chars[idx - 1].is_whitespace() {
-                                            idx -= 1;
-                                        }
-                                        state.manual_password_cursor = idx;
-                                    }
+                                    0 => state.manual_ssid_input.move_word_left(),
+                                    1 => state.manual_password_input.move_word_left(),
                                     _ => {}
                                 }
                             }
                             event::KeyCode::Left => match state.manual_input_field {
-                                0 => {
-                                    if state.manual_ssid_cursor > 0 {
-                                        state.manual_ssid_cursor -= 1;
-                                    }
-                                }
-                                1 => {
-                                    if state.manual_password_cursor > 0 {
-                                        state.manual_password_cursor -= 1;
-                                    }
-                                }
+                                0 => state.manual_ssid_input.move_left(),
+                                1 => state.manual_password_input.move_left(),
                                 2 => {
                                     let options =
                                         ["WPA2-PSK", "WPA3-SAE", "Open", "WPA-PSK", "WEP"];
@@ -543,50 +400,14 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 ) =>
                             {
                                 match state.manual_input_field {
-                                    0 => {
-                                        let chars: Vec<char> =
-                                            state.manual_ssid_input.chars().collect();
-                                        let mut idx = state.manual_ssid_cursor;
-                                        let len = chars.len();
-                                        while idx < len && !chars[idx].is_whitespace() {
-                                            idx += 1;
-                                        }
-                                        while idx < len && chars[idx].is_whitespace() {
-                                            idx += 1;
-                                        }
-                                        state.manual_ssid_cursor = idx;
-                                    }
-                                    1 => {
-                                        let chars: Vec<char> =
-                                            state.manual_password_input.chars().collect();
-                                        let mut idx = state.manual_password_cursor;
-                                        let len = chars.len();
-                                        while idx < len && !chars[idx].is_whitespace() {
-                                            idx += 1;
-                                        }
-                                        while idx < len && chars[idx].is_whitespace() {
-                                            idx += 1;
-                                        }
-                                        state.manual_password_cursor = idx;
-                                    }
+                                    0 => state.manual_ssid_input.move_word_right(),
+                                    1 => state.manual_password_input.move_word_right(),
                                     _ => {}
                                 }
                             }
                             event::KeyCode::Right => match state.manual_input_field {
-                                0 => {
-                                    if state.manual_ssid_cursor
-                                        < state.manual_ssid_input.chars().count()
-                                    {
-                                        state.manual_ssid_cursor += 1;
-                                    }
-                                }
-                                1 => {
-                                    if state.manual_password_cursor
-                                        < state.manual_password_input.chars().count()
-                                    {
-                                        state.manual_password_cursor += 1;
-                                    }
-                                }
+                                0 => state.manual_ssid_input.move_right(),
+                                1 => state.manual_password_input.move_right(),
                                 2 => {
                                     let options =
                                         ["WPA2-PSK", "WPA3-SAE", "Open", "WPA-PSK", "WEP"];
@@ -600,19 +421,13 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 _ => {}
                             },
                             event::KeyCode::Home => match state.manual_input_field {
-                                0 => state.manual_ssid_cursor = 0,
-                                1 => state.manual_password_cursor = 0,
+                                0 => state.manual_ssid_input.move_home(),
+                                1 => state.manual_password_input.move_home(),
                                 _ => {}
                             },
                             event::KeyCode::End => match state.manual_input_field {
-                                0 => {
-                                    state.manual_ssid_cursor =
-                                        state.manual_ssid_input.chars().count()
-                                }
-                                1 => {
-                                    state.manual_password_cursor =
-                                        state.manual_password_input.chars().count()
-                                }
+                                0 => state.manual_ssid_input.move_end(),
+                                1 => state.manual_password_input.move_end(),
                                 _ => {}
                             },
                             _ => {}
@@ -624,7 +439,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                     state.is_connecting = true;
                                     state.target_ssid = Some(ssid.clone());
                                     state.connection_start_time = Some(Instant::now());
-                                    let password = state.password_input.clone();
+                                    let password = state.password_input.value.clone();
                                     let (tx, rx) = mpsc::channel(1);
                                     state.connection_result_rx = Some(rx);
 
@@ -664,106 +479,33 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 state.show_password_popup = false;
                                 state.password_input.clear();
                             }
-                            event::KeyCode::Char(c) => {
-                                let byte_idx = state
-                                    .password_input
-                                    .chars()
-                                    .take(state.password_cursor)
-                                    .map(|c| c.len_utf8())
-                                    .sum();
-                                state.password_input.insert(byte_idx, c);
-                                state.password_cursor += 1;
-                            }
+                            event::KeyCode::Char(c) => state.password_input.insert(c),
                             event::KeyCode::Backspace
                                 if key.modifiers.intersects(
                                     event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
                                 ) =>
                             {
-                                if state.password_cursor > 0 {
-                                    let chars: Vec<char> = state.password_input.chars().collect();
-                                    let mut idx = state.password_cursor;
-                                    while idx > 0
-                                        && idx <= chars.len()
-                                        && chars[idx - 1].is_whitespace()
-                                    {
-                                        idx -= 1;
-                                    }
-                                    while idx > 0 && !chars[idx - 1].is_whitespace() {
-                                        idx -= 1;
-                                    }
-                                    let start_byte =
-                                        chars.iter().take(idx).map(|c| c.len_utf8()).sum::<usize>();
-                                    let end_byte = chars
-                                        .iter()
-                                        .take(state.password_cursor)
-                                        .map(|c| c.len_utf8())
-                                        .sum::<usize>();
-                                    state.password_input.replace_range(start_byte..end_byte, "");
-                                    state.password_cursor = idx;
-                                }
+                                state.password_input.backspace_word();
                             }
-                            event::KeyCode::Backspace => {
-                                if state.password_cursor > 0 {
-                                    let byte_idx = state
-                                        .password_input
-                                        .chars()
-                                        .take(state.password_cursor - 1)
-                                        .map(|c| c.len_utf8())
-                                        .sum();
-                                    state.password_input.remove(byte_idx);
-                                    state.password_cursor -= 1;
-                                }
-                            }
+                            event::KeyCode::Backspace => state.password_input.backspace(),
                             event::KeyCode::Left
                                 if key.modifiers.intersects(
                                     event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
                                 ) =>
                             {
-                                let chars: Vec<char> = state.password_input.chars().collect();
-                                let mut idx = state.password_cursor;
-                                while idx > 0
-                                    && idx <= chars.len()
-                                    && chars[idx - 1].is_whitespace()
-                                {
-                                    idx -= 1;
-                                }
-                                while idx > 0 && !chars[idx - 1].is_whitespace() {
-                                    idx -= 1;
-                                }
-                                state.password_cursor = idx;
+                                state.password_input.move_word_left();
                             }
-                            event::KeyCode::Left => {
-                                if state.password_cursor > 0 {
-                                    state.password_cursor -= 1;
-                                }
-                            }
+                            event::KeyCode::Left => state.password_input.move_left(),
                             event::KeyCode::Right
                                 if key.modifiers.intersects(
                                     event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
                                 ) =>
                             {
-                                let chars: Vec<char> = state.password_input.chars().collect();
-                                let mut idx = state.password_cursor;
-                                let len = chars.len();
-                                while idx < len && !chars[idx].is_whitespace() {
-                                    idx += 1;
-                                }
-                                while idx < len && chars[idx].is_whitespace() {
-                                    idx += 1;
-                                }
-                                state.password_cursor = idx;
+                                state.password_input.move_word_right();
                             }
-                            event::KeyCode::Right => {
-                                if state.password_cursor < state.password_input.chars().count() {
-                                    state.password_cursor += 1;
-                                }
-                            }
-                            event::KeyCode::Home => {
-                                state.password_cursor = 0;
-                            }
-                            event::KeyCode::End => {
-                                state.password_cursor = state.password_input.chars().count();
-                            }
+                            event::KeyCode::Right => state.password_input.move_right(),
+                            event::KeyCode::Home => state.password_input.move_home(),
+                            event::KeyCode::End => state.password_input.move_end(),
                             event::KeyCode::Esc => {
                                 state.show_password_popup = false;
                                 state.password_input.clear();
@@ -787,14 +529,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 }
                             }
                             event::KeyCode::Char(c) => {
-                                let byte_idx = state
-                                    .search_input
-                                    .chars()
-                                    .take(state.search_cursor)
-                                    .map(|c| c.len_utf8())
-                                    .sum();
-                                state.search_input.insert(byte_idx, c);
-                                state.search_cursor += 1;
+                                state.search_input.insert(c);
                                 state.update_filtered_list();
                             }
                             event::KeyCode::Backspace
@@ -802,93 +537,31 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                     event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
                                 ) =>
                             {
-                                if state.search_cursor > 0 {
-                                    let chars: Vec<char> = state.search_input.chars().collect();
-                                    let mut idx = state.search_cursor;
-                                    while idx > 0
-                                        && idx <= chars.len()
-                                        && chars[idx - 1].is_whitespace()
-                                    {
-                                        idx -= 1;
-                                    }
-                                    while idx > 0 && !chars[idx - 1].is_whitespace() {
-                                        idx -= 1;
-                                    }
-                                    let start_byte =
-                                        chars.iter().take(idx).map(|c| c.len_utf8()).sum::<usize>();
-                                    let end_byte = chars
-                                        .iter()
-                                        .take(state.search_cursor)
-                                        .map(|c| c.len_utf8())
-                                        .sum::<usize>();
-                                    state.search_input.replace_range(start_byte..end_byte, "");
-                                    state.search_cursor = idx;
-                                    state.update_filtered_list();
-                                }
+                                state.search_input.backspace_word();
+                                state.update_filtered_list();
                             }
                             event::KeyCode::Backspace => {
-                                if state.search_cursor > 0 {
-                                    let byte_idx = state
-                                        .search_input
-                                        .chars()
-                                        .take(state.search_cursor - 1)
-                                        .map(|c| c.len_utf8())
-                                        .sum();
-                                    state.search_input.remove(byte_idx);
-                                    state.search_cursor -= 1;
-                                    state.update_filtered_list();
-                                }
+                                state.search_input.backspace();
+                                state.update_filtered_list();
                             }
                             event::KeyCode::Left
                                 if key.modifiers.intersects(
                                     event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
                                 ) =>
                             {
-                                let chars: Vec<char> = state.search_input.chars().collect();
-                                let mut idx = state.search_cursor;
-                                while idx > 0
-                                    && idx <= chars.len()
-                                    && chars[idx - 1].is_whitespace()
-                                {
-                                    idx -= 1;
-                                }
-                                while idx > 0 && !chars[idx - 1].is_whitespace() {
-                                    idx -= 1;
-                                }
-                                state.search_cursor = idx;
+                                state.search_input.move_word_left();
                             }
-                            event::KeyCode::Left => {
-                                if state.search_cursor > 0 {
-                                    state.search_cursor -= 1;
-                                }
-                            }
+                            event::KeyCode::Left => state.search_input.move_left(),
                             event::KeyCode::Right
                                 if key.modifiers.intersects(
                                     event::KeyModifiers::CONTROL | event::KeyModifiers::ALT,
                                 ) =>
                             {
-                                let chars: Vec<char> = state.search_input.chars().collect();
-                                let mut idx = state.search_cursor;
-                                let len = chars.len();
-                                while idx < len && !chars[idx].is_whitespace() {
-                                    idx += 1;
-                                }
-                                while idx < len && chars[idx].is_whitespace() {
-                                    idx += 1;
-                                }
-                                state.search_cursor = idx;
+                                state.search_input.move_word_right();
                             }
-                            event::KeyCode::Right => {
-                                if state.search_cursor < state.search_input.chars().count() {
-                                    state.search_cursor += 1;
-                                }
-                            }
-                            event::KeyCode::Home => {
-                                state.search_cursor = 0;
-                            }
-                            event::KeyCode::End => {
-                                state.search_cursor = state.search_input.chars().count();
-                            }
+                            event::KeyCode::Right => state.search_input.move_right(),
+                            event::KeyCode::Home => state.search_input.move_home(),
+                            event::KeyCode::End => state.search_input.move_end(),
                             _ => {}
                         }
                     } else {
@@ -901,7 +574,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 state.manual_input_field = 0;
                             }
                             event::KeyCode::Esc => {
-                                if !state.search_input.is_empty() {
+                                if !state.search_input.value.is_empty() {
                                     state.search_input.clear();
                                     state.update_filtered_list();
                                 }
@@ -910,7 +583,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             event::KeyCode::Char('[')
                                 if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
                             {
-                                if !state.search_input.is_empty() {
+                                if !state.search_input.value.is_empty() {
                                     state.search_input.clear();
                                     state.update_filtered_list();
                                 }
@@ -967,7 +640,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                             });
                                         } else {
                                             state.show_password_popup = true;
-                                            state.password_cursor = 0;
+                                            state.password_input.cursor = 0;
                                             state.connecting_to_ssid = Some(wifi.ssid.clone());
                                         }
                                     } else {

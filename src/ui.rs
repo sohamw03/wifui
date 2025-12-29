@@ -94,14 +94,14 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         Constraint::Length(2), // Bottom bar
     ];
 
-    if state.is_searching || !state.search_input.is_empty() {
+    if state.is_searching || !state.search_input.value.is_empty() {
         constraints.insert(0, Constraint::Length(3));
     }
 
     let content_layout = Layout::vertical(constraints).split(inner_area);
 
     let (search_area, list_area, details_area, help_area) =
-        if state.is_searching || !state.search_input.is_empty() {
+        if state.is_searching || !state.search_input.value.is_empty() {
             (
                 Some(content_layout[0]),
                 content_layout[1],
@@ -132,22 +132,28 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .title(" Search (/) ")
             .border_style(search_style);
 
-        let max_width = (area.width - 2) as usize;
-        let input_len = state.search_input.chars().count();
-        let cursor_pos = state.search_cursor;
+        let max_width = (area.width.saturating_sub(2)) as usize;
+        let input_len = state.search_input.value.chars().count();
+        let cursor_pos = state.search_input.cursor;
 
         let (display_text, cursor_x) = if input_len < max_width {
-            (state.search_input.clone(), cursor_pos)
+            (state.search_input.value.clone(), cursor_pos)
         } else {
             // If cursor is near the end, show the end
             if cursor_pos >= max_width {
                 let skip = cursor_pos - max_width + 1;
                 let take = max_width;
-                let text: String = state.search_input.chars().skip(skip).take(take).collect();
+                let text: String = state
+                    .search_input
+                    .value
+                    .chars()
+                    .skip(skip)
+                    .take(take)
+                    .collect();
                 (text, max_width - 1)
             } else {
                 // If cursor is at the beginning, show the beginning
-                let text: String = state.search_input.chars().take(max_width).collect();
+                let text: String = state.search_input.value.chars().take(max_width).collect();
                 (text, cursor_pos)
             }
         };
@@ -441,7 +447,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 Span::styled(" dropdown", Style::default().fg(theme::DIMMED)),
             ]),
         ]
-    } else if state.is_searching || !state.search_input.is_empty() {
+    } else if state.is_searching || !state.search_input.value.is_empty() {
         // Search active - show search-specific shortcuts
         vec![Line::from(vec![
             Span::styled("󰌑", Style::default().fg(theme::FOREGROUND)),
@@ -531,13 +537,14 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
         let popup_text = state
             .password_input
+            .value
             .chars()
             .map(|_| '•')
             .collect::<String>();
 
-        let max_width = (popup_area.width - 4) as usize;
+        let max_width = (popup_area.width.saturating_sub(4)) as usize;
         let input_len = popup_text.chars().count();
-        let cursor_pos = state.password_cursor;
+        let cursor_pos = state.password_input.cursor;
 
         let (display_text, cursor_x) = if input_len < max_width {
             (popup_text, cursor_pos)
@@ -642,10 +649,10 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .style(Style::default().bg(theme::BACKGROUND));
 
         // SSID Cursor Logic
-        let max_width_ssid = (layout[0].width - 2) as usize;
-        let ssid_text = &state.manual_ssid_input;
+        let max_width_ssid = (layout[0].width.saturating_sub(2)) as usize;
+        let ssid_text = &state.manual_ssid_input.value;
         let ssid_len = ssid_text.chars().count();
-        let ssid_cursor = state.manual_ssid_cursor;
+        let ssid_cursor = state.manual_ssid_input.cursor;
 
         let (display_ssid, ssid_cursor_x) = if ssid_len < max_width_ssid {
             (ssid_text.clone(), ssid_cursor)
@@ -697,10 +704,15 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .style(Style::default().bg(theme::BACKGROUND));
 
         // Password Cursor Logic
-        let max_width_pass = (layout[1].width - 2) as usize;
-        let pass_text: String = state.manual_password_input.chars().map(|_| '•').collect();
+        let max_width_pass = (layout[1].width.saturating_sub(2)) as usize;
+        let pass_text: String = state
+            .manual_password_input
+            .value
+            .chars()
+            .map(|_| '•')
+            .collect();
         let pass_len = pass_text.chars().count();
-        let pass_cursor = state.manual_password_cursor;
+        let pass_cursor = state.manual_password_input.cursor;
 
         let (display_pass, pass_cursor_x) = if pass_len < max_width_pass {
             (pass_text, pass_cursor)

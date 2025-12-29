@@ -1,4 +1,7 @@
-use crate::wifi::{WifiInfo, get_connected_ssid};
+use crate::{
+    input::InputState,
+    wifi::{WifiInfo, get_connected_ssid},
+};
 use color_eyre::eyre::Result;
 use ratatui::widgets::ListState;
 use std::time::{Duration, Instant};
@@ -11,10 +14,8 @@ pub struct AppState {
     pub l_state: ListState,
     pub connected_ssid: Option<String>,
     pub show_password_popup: bool,
-    pub password_input: String,
-    pub password_cursor: usize,
-    pub search_input: String,
-    pub search_cursor: usize,
+    pub password_input: InputState,
+    pub search_input: InputState,
     pub is_searching: bool,
     pub connecting_to_ssid: Option<String>,
     pub last_refresh: Instant,
@@ -31,13 +32,11 @@ pub struct AppState {
     pub show_key_logger: bool,
     pub last_key_press: Option<(String, Instant)>,
     pub show_manual_add_popup: bool,
-    pub manual_ssid_input: String,
-    pub manual_password_input: String,
+    pub manual_ssid_input: InputState,
+    pub manual_password_input: InputState,
     pub manual_security: String,
     pub manual_hidden: bool,
     pub manual_input_field: usize,
-    pub manual_ssid_cursor: usize,
-    pub manual_password_cursor: usize,
 }
 
 impl AppState {
@@ -48,10 +47,8 @@ impl AppState {
             l_state: ListState::default().with_selected(Some(0)),
             connected_ssid: get_connected_ssid().unwrap_or(None),
             show_password_popup: false,
-            password_input: String::new(),
-            password_cursor: 0,
-            search_input: String::new(),
-            search_cursor: 0,
+            password_input: InputState::new(),
+            search_input: InputState::new(),
             is_searching: false,
             connecting_to_ssid: None,
             last_refresh: Instant::now() - Duration::from_secs(15), // Force immediate refresh
@@ -68,13 +65,11 @@ impl AppState {
             show_key_logger,
             last_key_press: None,
             show_manual_add_popup: false,
-            manual_ssid_input: String::new(),
-            manual_password_input: String::new(),
+            manual_ssid_input: InputState::new(),
+            manual_password_input: InputState::new(),
             manual_security: "WPA2-PSK".to_string(),
             manual_hidden: false,
             manual_input_field: 0,
-            manual_ssid_cursor: 0,
-            manual_password_cursor: 0,
         }
     }
 
@@ -119,10 +114,10 @@ impl AppState {
     }
 
     pub fn update_filtered_list(&mut self) {
-        if self.search_input.is_empty() {
+        if self.search_input.value.is_empty() {
             self.filtered_wifi_list = self.wifi_list.clone();
         } else {
-            let search_lower = self.search_input.to_lowercase();
+            let search_lower = self.search_input.value.to_lowercase();
             self.filtered_wifi_list = self
                 .wifi_list
                 .iter()

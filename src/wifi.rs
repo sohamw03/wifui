@@ -458,15 +458,19 @@ pub fn connect_profile(ssid: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn connect_with_password(
+fn create_profile_xml(
     ssid: &str,
-    password: &str,
     auth: &str,
     cipher: &str,
+    password: Option<&str>,
     hidden: bool,
-) -> Result<()> {
+) -> String {
     let ssid_escaped = escape_xml(ssid);
-    let password_escaped = escape_xml(password);
+    let non_broadcast = if hidden {
+        "<nonBroadcast>true</nonBroadcast>"
+    } else {
+        ""
+    };
 
     let (xml_auth, xml_cipher) = match auth {
         "WPA3-SAE" => ("WPA3SAE", "AES"),
@@ -476,18 +480,28 @@ pub fn connect_with_password(
         "WPA-PSK" => ("WPAPSK", if cipher == "AES" { "AES" } else { "TKIP" }),
         "WPA" => ("WPA", if cipher == "AES" { "AES" } else { "TKIP" }),
         "Shared" => ("shared", "WEP"),
+        "Open" | "open" => ("open", "none"),
         _ => ("WPA2PSK", "AES"),
     };
 
     let final_cipher = if cipher == "GCMP" { "GCMP" } else { xml_cipher };
 
-    let non_broadcast = if hidden {
-        "<nonBroadcast>true</nonBroadcast>"
+    let key_material_block = if let Some(pwd) = password {
+        format!(
+            r#"<sharedKey>
+                <keyType>passPhrase</keyType>
+                <protected>false</protected>
+                <keyMaterial>{}</keyMaterial>
+            </sharedKey>"#,
+            escape_xml(pwd)
+        )
     } else {
-        ""
+        String::new()
     };
 
-    let profile_xml = format!(
+    let connection_mode = if password.is_some() { "auto" } else { "manual" };
+
+    format!(
         r#"<?xml version="1.0"?>
 <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
     <name>{}</name>
@@ -498,7 +512,7 @@ pub fn connect_with_password(
         {}
     </SSIDConfig>
     <connectionType>ESS</connectionType>
-    <connectionMode>auto</connectionMode>
+    <connectionMode>{}</connectionMode>
     <MSM>
         <security>
             <authEncryption>
@@ -506,16 +520,28 @@ pub fn connect_with_password(
                 <encryption>{}</encryption>
                 <useOneX>false</useOneX>
             </authEncryption>
-            <sharedKey>
-                <keyType>passPhrase</keyType>
-                <protected>false</protected>
-                <keyMaterial>{}</keyMaterial>
-            </sharedKey>
+            {}
         </security>
     </MSM>
 </WLANProfile>"#,
-        ssid_escaped, ssid_escaped, non_broadcast, xml_auth, final_cipher, password_escaped
-    );
+        ssid_escaped,
+        ssid_escaped,
+        non_broadcast,
+        connection_mode,
+        xml_auth,
+        final_cipher,
+        key_material_block
+    )
+}
+
+pub fn connect_with_password(
+    ssid: &str,
+    password: &str,
+    auth: &str,
+    cipher: &str,
+    hidden: bool,
+) -> Result<()> {
+    let profile_xml = create_profile_xml(ssid, auth, cipher, Some(password), hidden);
 
     let (handle, _) = get_wlan_handle()?;
     let guid = get_interface_guid(handle)?;
@@ -554,37 +580,7 @@ pub fn connect_with_password(
 }
 
 pub fn connect_open(ssid: &str, hidden: bool) -> Result<()> {
-    let ssid_escaped = escape_xml(ssid);
-    let non_broadcast = if hidden {
-        "<nonBroadcast>true</nonBroadcast>"
-    } else {
-        ""
-    };
-
-    let profile_xml = format!(
-        r#"<?xml version="1.0"?>
-<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
-    <name>{}</name>
-    <SSIDConfig>
-        <SSID>
-            <name>{}</name>
-        </SSID>
-        {}
-    </SSIDConfig>
-    <connectionType>ESS</connectionType>
-    <connectionMode>manual</connectionMode>
-    <MSM>
-        <security>
-            <authEncryption>
-                <authentication>open</authentication>
-                <encryption>none</encryption>
-                <useOneX>false</useOneX>
-            </authEncryption>
-        </security>
-    </MSM>
-</WLANProfile>"#,
-        ssid_escaped, ssid_escaped, non_broadcast
-    );
+    let profile_xml = create_profile_xml(ssid, "Open", "None", None, hidden);
 
     let (handle, _) = get_wlan_handle()?;
     let guid = get_interface_guid(handle)?;

@@ -1,5 +1,6 @@
 mod app;
 mod event;
+mod input;
 mod theme;
 mod ui;
 mod wifi;
@@ -7,7 +8,11 @@ mod wifi;
 use color_eyre::eyre::Result;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
-use crate::{app::AppState, event::run, wifi::{get_wifi_networks, scan_networks}};
+use crate::{
+    app::AppState,
+    event::run,
+    wifi::{get_wifi_networks, scan_networks},
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
