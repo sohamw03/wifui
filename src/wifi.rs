@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
 use windows::{
     Win32::{
-        Foundation::{ERROR_SUCCESS, HANDLE},
+        Foundation::{ERROR_NOT_FOUND, ERROR_SUCCESS, HANDLE},
         NetworkManagement::WiFi::*,
     },
     core::{GUID, PCWSTR, PWSTR},
@@ -804,7 +804,7 @@ pub fn forget_network(ssid: &str) -> Result<()> {
         let result = WlanDeleteProfile(handle, &guid, p_profile_name, None);
         WlanCloseHandle(handle, None);
 
-        if result != ERROR_SUCCESS.0 {
+        if result != ERROR_SUCCESS.0 && result != ERROR_NOT_FOUND.0 {
             return Err(eyre!("Failed to forget network: {}", result));
         }
     }

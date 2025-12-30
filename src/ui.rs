@@ -751,7 +751,8 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         frame.render_widget(pass_para, layout[1]);
 
         // Security Selector
-        let sec_style = if state.manual_input_field == 2 {
+        let is_active = state.manual_input_field == 2;
+        let sec_border_style = if is_active {
             Style::default().fg(theme::YELLOW)
         } else {
             Style::default().fg(theme::FOREGROUND)
@@ -760,11 +761,30 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .title(" Security ")
-            .border_style(sec_style)
+            .border_style(sec_border_style)
             .style(Style::default().bg(theme::BACKGROUND));
-        let sec_para = Paragraph::new(format!(" < {} > ", state.manual_security))
-            .block(sec_block)
-            .alignment(Alignment::Center);
+
+        let arrow_style = if is_active {
+            Style::default().fg(theme::YELLOW)
+        } else {
+            Style::default().fg(theme::DIMMED)
+        };
+
+        let value_style = if is_active {
+            Style::default()
+                .fg(theme::FOREGROUND)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::FOREGROUND)
+        };
+
+        let sec_para = Paragraph::new(Line::from(vec![
+            Span::styled("◀ ", arrow_style),
+            Span::styled(format!(" {} ", state.manual_security), value_style),
+            Span::styled(" ▶", arrow_style),
+        ]))
+        .block(sec_block)
+        .alignment(Alignment::Center);
         frame.render_widget(sec_para, layout[2]);
 
         // Hidden Checkbox + Connect Button Row

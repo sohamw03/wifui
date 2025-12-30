@@ -157,7 +157,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
         let refresh_interval = if state.refresh_burst > 0 {
             Duration::from_secs(1)
         } else {
-            Duration::from_secs(5)
+            Duration::from_secs(10)
         };
 
         if !state.is_refreshing_networks
@@ -609,7 +609,11 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 state.manual_input_field = 0;
                             }
                             event::KeyCode::Esc => {
-                                if !state.search_input.value.is_empty() {
+                                if state.is_connecting {
+                                    state.is_connecting = false;
+                                    state.target_ssid = None;
+                                    state.connection_result_rx = None;
+                                } else if !state.search_input.value.is_empty() {
                                     state.search_input.clear();
                                     state.update_filtered_list();
                                 }
@@ -745,18 +749,20 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                     && let Some(wifi) =
                                         state.filtered_wifi_list.get(selected).cloned()
                                 {
-                                    let ssid = wifi.ssid.clone();
-                                    let (tx, rx) = mpsc::channel(1);
-                                    state.connection_result_rx = Some(rx);
+                                    if wifi.is_saved {
+                                        let ssid = wifi.ssid.clone();
+                                        let (tx, rx) = mpsc::channel(1);
+                                        state.connection_result_rx = Some(rx);
 
-                                    tokio::spawn(async move {
-                                        let result = tokio::task::spawn_blocking(move || {
-                                            forget_network(&ssid)
-                                        })
-                                        .await
-                                        .unwrap();
-                                        let _ = tx.send(result).await;
-                                    });
+                                        tokio::spawn(async move {
+                                            let result = tokio::task::spawn_blocking(move || {
+                                                forget_network(&ssid)
+                                            })
+                                            .await
+                                            .unwrap();
+                                            let _ = tx.send(result).await;
+                                        });
+                                    }
                                 }
                             }
                             _ => {}
