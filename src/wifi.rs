@@ -156,6 +156,7 @@ unsafe extern "system" fn notification_callback(
                 294917 => "Incorrect Password (Key Exchange Timeout)".to_string(), // WLAN_REASON_CODE_MSMSEC_AUTH_SUCCESS_TIMEOUT (0x00048005) - Often Wrong Password
                 294932 => "Authentication Timeout (Possible Wrong Password)".to_string(), // 0x48014 - Timeout waiting for response
                 524294 => "MSM Security Missing".to_string(), // WLAN_REASON_CODE_MSM_SECURITY_MISSING
+                229396 => "Connection Failed (Profile Issue)".to_string(), // 0x38014 - WLAN_REASON_CODE_MSMSEC_UI_REQUEST_FAILURE
 
                 _ => format!("Reason Code: {}", reason_code),
             };
@@ -674,7 +675,7 @@ fn create_profile_xml(
         String::new()
     };
 
-    let connection_mode = if password.is_some() { "auto" } else { "manual" };
+    let connection_mode = "manual";
 
     format!(
         r#"<?xml version="1.0"?>
@@ -751,6 +752,9 @@ pub fn connect_with_password(
         WlanCloseHandle(handle, None);
     }
 
+    // Give the system a moment to register the profile
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+
     connect_profile(ssid)
 }
 
@@ -789,6 +793,9 @@ pub fn connect_open(ssid: &str, hidden: bool) -> Result<()> {
         }
         WlanCloseHandle(handle, None);
     }
+
+    // Give the system a moment to register the profile
+    std::thread::sleep(std::time::Duration::from_millis(1000));
 
     connect_profile(ssid)
 }

@@ -21,9 +21,11 @@
 
 ## 📸 Screenshots
 
-| Home | Search | Password |
-|:---:|:---:|:---:|
-| ![Home](images/main.png) | ![Search](images/search.png) | ![Password](images/password.png) |
+| Home | Add Network |
+|:---:|:---:|
+| ![Home](images/main.png) | ![Search](images/addnetwork.png) |
+| Password | Search |
+| ![Password](images/password.png) | ![Search](images/search.png) |
 
 ## 📦 Installation
 
