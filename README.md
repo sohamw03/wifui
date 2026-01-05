@@ -59,7 +59,10 @@ cargo install wifui
 ### From Source
 
 Ensure you have the [Rust toolchain](https://www.rust-lang.org/tools/install) installed.
-
+```sh
+winget install Rustlang.Rustup
+winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--passive --wait --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.Windows11SDK.22621"
+```
 ```sh
 git clone https://github.com/sohamw03/wifui.git
 cd wifui
