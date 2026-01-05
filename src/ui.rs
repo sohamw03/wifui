@@ -1,4 +1,5 @@
 use crate::app::AppState;
+use crate::config;
 use crate::theme;
 use ratatui::{
     prelude::*,
@@ -10,7 +11,8 @@ use ratatui::{
 
 pub fn render(frame: &mut Frame, state: &mut AppState) {
     let area = frame.area();
-    let is_dimmed = state.show_manual_add_popup || state.show_password_popup;
+    let is_dimmed = state.is_popup_open();
+    let icons = &state.ui.icon_set;
 
     // Set background color for the entire screen
     frame.render_widget(
@@ -20,7 +22,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
     // Calculate dynamic dimensions to ensure perfect centering
     // Adjust width/height to match the parity of the terminal size
-    let target_height = 32;
+    let target_height = config::MAIN_WINDOW_HEIGHT;
     let height = if area.height % 2 == 0 {
         if target_height % 2 == 0 {
             target_height
@@ -35,7 +37,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         }
     };
 
-    let target_width = 77;
+    let target_width = config::MAIN_WINDOW_WIDTH;
     let width = if area.width % 2 == 0 {
         if target_width % 2 == 0 {
             target_width
@@ -94,14 +96,14 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         Constraint::Length(2), // Bottom bar
     ];
 
-    if state.is_searching || !state.search_input.value.is_empty() {
+    if state.ui.is_searching || !state.inputs.search_input.value.is_empty() {
         constraints.insert(0, Constraint::Length(3));
     }
 
     let content_layout = Layout::vertical(constraints).split(inner_area);
 
     let (search_area, list_area, details_area, help_area) =
-        if state.is_searching || !state.search_input.value.is_empty() {
+        if state.ui.is_searching || !state.inputs.search_input.value.is_empty() {
             (
                 Some(content_layout[0]),
                 content_layout[1],
@@ -120,7 +122,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
     if let Some(area) = search_area {
         let search_style = if is_dimmed {
             Style::default().fg(theme::DIMMED)
-        } else if state.is_searching {
+        } else if state.ui.is_searching {
             Style::default().fg(theme::YELLOW)
         } else {
             Style::default().fg(theme::CYAN)
@@ -133,17 +135,18 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .border_style(search_style);
 
         let max_width = (area.width.saturating_sub(2)) as usize;
-        let input_len = state.search_input.value.chars().count();
-        let cursor_pos = state.search_input.cursor;
+        let input_len = state.inputs.search_input.value.chars().count();
+        let cursor_pos = state.inputs.search_input.cursor;
 
         let (display_text, cursor_x) = if input_len < max_width {
-            (state.search_input.value.clone(), cursor_pos)
+            (state.inputs.search_input.value.clone(), cursor_pos)
         } else {
             // If cursor is near the end, show the end
             if cursor_pos >= max_width {
                 let skip = cursor_pos - max_width + 1;
                 let take = max_width;
                 let text: String = state
+                    .inputs
                     .search_input
                     .value
                     .chars()
@@ -153,7 +156,13 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 (text, max_width - 1)
             } else {
                 // If cursor is at the beginning, show the beginning
-                let text: String = state.search_input.value.chars().take(max_width).collect();
+                let text: String = state
+                    .inputs
+                    .search_input
+                    .value
+                    .chars()
+                    .take(max_width)
+                    .collect();
                 (text, cursor_pos)
             }
         };
@@ -162,7 +171,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         let chars: Vec<char> = display_text.chars().collect();
 
         for (i, c) in chars.iter().enumerate() {
-            if i == cursor_x && state.is_searching && !is_dimmed {
+            if i == cursor_x && state.ui.is_searching && !is_dimmed {
                 spans.push(Span::styled(
                     c.to_string(),
                     Style::default().bg(theme::FOREGROUND).fg(theme::BACKGROUND),
@@ -177,7 +186,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             }
         }
 
-        if cursor_x == chars.len() && state.is_searching && !is_dimmed {
+        if cursor_x == chars.len() && state.ui.is_searching && !is_dimmed {
             spans.push(Span::styled(
                 " ",
                 Style::default().bg(theme::FOREGROUND).fg(theme::BACKGROUND),
@@ -190,6 +199,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
     }
 
     let list_items: Vec<ListItem> = state
+        .network
         .filtered_wifi_list
         .iter()
         .map(|w| {
@@ -204,19 +214,19 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 if !is_dimmed {
                     style = style.fg(theme::BLUE);
                 }
-                "󰆓 " // nf-md-content_save
+                icons.saved()
             } else if w.authentication == "Open" {
-                " " // nf-fa-rss
+                icons.open()
             } else {
-                " " // nf-fa-lock
+                icons.locked()
             };
 
             ssid = format!("{}{}", prefix, ssid);
 
-            if let Some(connected_ssid) = &state.connected_ssid
+            if let Some(connected_ssid) = &state.network.connected_ssid
                 && w.ssid == *connected_ssid
             {
-                ssid = format!("{} 󰖩", ssid); // nf-md-wifi_check
+                ssid = format!("{}{}", ssid, icons.connected());
                 if is_dimmed {
                     style = style.fg(theme::DIMMED).add_modifier(Modifier::BOLD);
                 } else {
@@ -226,9 +236,9 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
             if w.is_saved {
                 if w.auto_connect {
-                    ssid = format!("{} 󰁪", ssid);
+                    ssid = format!("{}{}", ssid, icons.auto_on());
                 } else {
-                    ssid = format!("{} 󱧧", ssid);
+                    ssid = format!("{}{}", ssid, icons.auto_off());
                 }
             }
 
@@ -261,7 +271,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 .border_type(BorderType::Rounded)
                 .border_style(list_border_style),
         )
-        .highlight_symbol("  ")
+        .highlight_symbol(icons.highlight())
         .highlight_style(
             Style::default()
                 .add_modifier(Modifier::BOLD)
@@ -272,13 +282,13 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 }),
         );
 
-    frame.render_stateful_widget(list, list_area, &mut state.l_state);
+    frame.render_stateful_widget(list, list_area, &mut state.ui.l_state);
 
     let viewport_height = list_area.height.saturating_sub(2) as usize;
-    let content_len = state.filtered_wifi_list.len();
+    let content_len = state.network.filtered_wifi_list.len();
 
     let mut scroll_state = ScrollbarState::new(content_len)
-        .position(state.l_state.selected().unwrap_or(0))
+        .position(state.ui.l_state.selected().unwrap_or(0))
         .viewport_content_length(viewport_height);
 
     if content_len > viewport_height {
@@ -306,8 +316,8 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         );
     }
 
-    if let Some(selected) = state.l_state.selected()
-        && let Some(wifi) = state.filtered_wifi_list.get(selected)
+    if let Some(selected) = state.ui.l_state.selected()
+        && let Some(wifi) = state.network.filtered_wifi_list.get(selected)
     {
         let label_style = if is_dimmed {
             Style::default().fg(theme::DIMMED)
@@ -371,16 +381,14 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         ];
 
         if wifi.is_saved {
+            let auto_text = if wifi.auto_connect {
+                format!("Yes {}", icons.auto_on())
+            } else {
+                format!("No {}", icons.auto_off())
+            };
             info.push(Line::from(vec![
                 Span::styled("Auto-Connect: ", label_style),
-                Span::styled(
-                    if wifi.auto_connect {
-                        "Yes 󰁪"
-                    } else {
-                        "No 󱧧"
-                    },
-                    value_style,
-                ),
+                Span::styled(auto_text, value_style),
             ]));
         }
 
@@ -419,38 +427,38 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         frame.render_widget(paragraph, details_area);
     }
 
-    let help_text = if state.show_password_popup {
+    let help_text = if state.ui.show_password_popup {
         // Password input active - show password-specific shortcuts
         vec![Line::from(vec![
-            Span::styled("󰌑", Style::default().fg(theme::FOREGROUND)),
+            Span::styled(icons.enter(), Style::default().fg(theme::FOREGROUND)),
             Span::styled(" connect • ", Style::default().fg(theme::DIMMED)),
             Span::styled("esc", Style::default().fg(theme::FOREGROUND)),
             Span::styled(" cancel", Style::default().fg(theme::DIMMED)),
         ])]
-    } else if state.show_manual_add_popup {
+    } else if state.ui.show_manual_add_popup {
         // Manual add popup active - show relevant navigation & actions
         vec![
             Line::from(vec![
-                Span::styled("⇥ / ↓", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(icons.tab_next(), Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" next • ", Style::default().fg(theme::DIMMED)),
-                Span::styled("⇤ / ↑", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(icons.tab_prev(), Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" prev • ", Style::default().fg(theme::DIMMED)),
-                Span::styled("󰌑", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(icons.enter(), Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" connect • ", Style::default().fg(theme::DIMMED)),
                 Span::styled("esc", Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" cancel", Style::default().fg(theme::DIMMED)),
             ]),
             Line::from(vec![
-                Span::styled("󱁐", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(icons.space(), Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" checkbox • ", Style::default().fg(theme::DIMMED)),
                 Span::styled("h/l/j/k", Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" dropdown", Style::default().fg(theme::DIMMED)),
             ]),
         ]
-    } else if state.is_searching || !state.search_input.value.is_empty() {
+    } else if state.ui.is_searching || !state.inputs.search_input.value.is_empty() {
         // Search active - show search-specific shortcuts
         vec![Line::from(vec![
-            Span::styled("󰌑", Style::default().fg(theme::FOREGROUND)),
+            Span::styled(icons.enter(), Style::default().fg(theme::FOREGROUND)),
             Span::styled(" apply • ", Style::default().fg(theme::DIMMED)),
             Span::styled("esc esc", Style::default().fg(theme::FOREGROUND)),
             Span::styled(" cancel", Style::default().fg(theme::DIMMED)),
@@ -463,7 +471,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 Span::styled(" quit • ", Style::default().fg(theme::DIMMED)),
                 Span::styled("j/k", Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" nav • ", Style::default().fg(theme::DIMMED)),
-                Span::styled("󰌑", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(icons.enter(), Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" conn / dconn • ", Style::default().fg(theme::DIMMED)),
                 Span::styled("f", Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" forget • ", Style::default().fg(theme::DIMMED)),
@@ -488,9 +496,9 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
     frame.render_widget(help_paragraph, help_area);
 
-    if state.is_connecting {
-        let loading_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let loading_char = loading_chars[state.loading_frame % loading_chars.len()];
+    if state.connection.is_connecting {
+        let loading_char =
+            config::LOADING_CHARS[state.ui.loading_frame % config::LOADING_CHARS.len()];
 
         let area = frame.area();
         let loading_area = Rect::new(area.width / 2 - 10, area.height / 2 - 1, 20, 3);
@@ -509,7 +517,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         frame.render_widget(loading_paragraph, loading_area);
     }
 
-    if let Some(error) = &state.error_message {
+    if let Some(error) = &state.ui.error_message {
         let error_area = Rect::new(area.x + 2, area.height - 4, area.width - 4, 3);
         let error_paragraph = Paragraph::new(error.as_str())
             .block(
@@ -525,7 +533,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         frame.render_widget(error_paragraph, error_area);
     }
 
-    if state.show_password_popup {
+    if state.ui.show_password_popup {
         let networks_area = list_area;
         let popup_height = 3;
         let popup_area = Rect {
@@ -535,16 +543,17 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             height: popup_height,
         };
 
-        let popup_text = state
+        let popup_text: String = state
+            .inputs
             .password_input
             .value
             .chars()
             .map(|_| '•')
-            .collect::<String>();
+            .collect();
 
         let max_width = (popup_area.width.saturating_sub(4)) as usize;
         let input_len = popup_text.chars().count();
-        let cursor_pos = state.password_input.cursor;
+        let cursor_pos = state.inputs.password_input.cursor;
 
         let (display_text, cursor_x) = if input_len < max_width {
             (popup_text, cursor_pos)
@@ -584,7 +593,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         let popup_block = Block::default()
             .title(format!(
                 " Password for {} ",
-                state.connecting_to_ssid.as_deref().unwrap_or("")
+                state.connection.connecting_to_ssid.as_deref().unwrap_or("")
             ))
             .title_alignment(Alignment::Left)
             .borders(Borders::ALL)
@@ -601,7 +610,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         frame.render_widget(popup, popup_area);
     }
 
-    if state.show_manual_add_popup {
+    if state.ui.show_manual_add_popup {
         let networks_area = list_area;
         let popup_height = 13;
         let popup_area = Rect {
@@ -636,7 +645,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         .split(inner);
 
         // SSID Input
-        let ssid_style = if state.manual_input_field == 0 {
+        let ssid_style = if state.inputs.manual_input_field == 0 {
             Style::default().fg(theme::YELLOW)
         } else {
             Style::default().fg(theme::FOREGROUND)
@@ -650,9 +659,9 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
         // SSID Cursor Logic
         let max_width_ssid = (layout[0].width.saturating_sub(2)) as usize;
-        let ssid_text = &state.manual_ssid_input.value;
+        let ssid_text = &state.inputs.manual_ssid_input.value;
         let ssid_len = ssid_text.chars().count();
-        let ssid_cursor = state.manual_ssid_input.cursor;
+        let ssid_cursor = state.inputs.manual_ssid_input.cursor;
 
         let (display_ssid, ssid_cursor_x) = if ssid_len < max_width_ssid {
             (ssid_text.clone(), ssid_cursor)
@@ -671,7 +680,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         let mut ssid_spans = Vec::new();
         let ssid_chars: Vec<char> = display_ssid.chars().collect();
         for (i, c) in ssid_chars.iter().enumerate() {
-            if i == ssid_cursor_x && state.manual_input_field == 0 {
+            if i == ssid_cursor_x && state.inputs.manual_input_field == 0 {
                 ssid_spans.push(Span::styled(
                     c.to_string(),
                     Style::default().bg(theme::FOREGROUND).fg(theme::BACKGROUND),
@@ -680,7 +689,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 ssid_spans.push(Span::raw(c.to_string()));
             }
         }
-        if ssid_cursor_x == ssid_chars.len() && state.manual_input_field == 0 {
+        if ssid_cursor_x == ssid_chars.len() && state.inputs.manual_input_field == 0 {
             ssid_spans.push(Span::styled(
                 " ",
                 Style::default().bg(theme::FOREGROUND).fg(theme::BACKGROUND),
@@ -691,7 +700,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         frame.render_widget(ssid_para, layout[0]);
 
         // Password Input
-        let pass_style = if state.manual_input_field == 1 {
+        let pass_style = if state.inputs.manual_input_field == 1 {
             Style::default().fg(theme::YELLOW)
         } else {
             Style::default().fg(theme::FOREGROUND)
@@ -706,13 +715,14 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         // Password Cursor Logic
         let max_width_pass = (layout[1].width.saturating_sub(2)) as usize;
         let pass_text: String = state
+            .inputs
             .manual_password_input
             .value
             .chars()
             .map(|_| '•')
             .collect();
         let pass_len = pass_text.chars().count();
-        let pass_cursor = state.manual_password_input.cursor;
+        let pass_cursor = state.inputs.manual_password_input.cursor;
 
         let (display_pass, pass_cursor_x) = if pass_len < max_width_pass {
             (pass_text, pass_cursor)
@@ -731,7 +741,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         let mut pass_spans = Vec::new();
         let pass_chars: Vec<char> = display_pass.chars().collect();
         for (i, c) in pass_chars.iter().enumerate() {
-            if i == pass_cursor_x && state.manual_input_field == 1 {
+            if i == pass_cursor_x && state.inputs.manual_input_field == 1 {
                 pass_spans.push(Span::styled(
                     c.to_string(),
                     Style::default().bg(theme::FOREGROUND).fg(theme::BACKGROUND),
@@ -740,7 +750,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 pass_spans.push(Span::raw(c.to_string()));
             }
         }
-        if pass_cursor_x == pass_chars.len() && state.manual_input_field == 1 {
+        if pass_cursor_x == pass_chars.len() && state.inputs.manual_input_field == 1 {
             pass_spans.push(Span::styled(
                 " ",
                 Style::default().bg(theme::FOREGROUND).fg(theme::BACKGROUND),
@@ -751,7 +761,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         frame.render_widget(pass_para, layout[1]);
 
         // Security Selector
-        let is_active = state.manual_input_field == 2;
+        let is_active = state.inputs.manual_input_field == 2;
         let sec_border_style = if is_active {
             Style::default().fg(theme::YELLOW)
         } else {
@@ -779,9 +789,9 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         };
 
         let sec_para = Paragraph::new(Line::from(vec![
-            Span::styled("◀ ", arrow_style),
-            Span::styled(format!(" {} ", state.manual_security), value_style),
-            Span::styled(" ▶", arrow_style),
+            Span::styled(format!("{} ", icons.arrow_left()), arrow_style),
+            Span::styled(format!(" {} ", state.inputs.manual_security), value_style),
+            Span::styled(format!(" {}", icons.arrow_right()), arrow_style),
         ]))
         .block(sec_block)
         .alignment(Alignment::Center);
@@ -792,38 +802,40 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             Layout::horizontal([Constraint::Min(20), Constraint::Length(15)]).split(layout[4]);
 
         // Hidden Checkbox
-        let hidden_style = if state.manual_input_field == 3 {
+        let hidden_style = if state.inputs.manual_input_field == 3 {
             Style::default().fg(theme::YELLOW)
         } else {
             Style::default().fg(theme::FOREGROUND)
         };
-        let hidden_text = if state.manual_hidden {
-            "  Hidden Network"
-        } else {
-            "  Hidden Network"
-        };
+        let hidden_text = format!(
+            "{} Hidden Network",
+            icons.checkbox(state.inputs.manual_hidden)
+        );
         let hidden_para = Paragraph::new(hidden_text).style(hidden_style);
         frame.render_widget(hidden_para, bottom_layout[0]);
 
         // Connect Button
-        let connect_btn = if state.manual_input_field == 4 {
+        let connect_btn = if state.inputs.manual_input_field == 4 {
             Paragraph::new(Line::from(vec![
-                Span::styled("", Style::default().fg(theme::GREEN)),
+                Span::styled(icons.btn_left(), Style::default().fg(theme::GREEN)),
                 Span::styled(
                     "Connect",
                     Style::default().bg(theme::GREEN).fg(theme::BACKGROUND),
                 ),
-                Span::styled("", Style::default().fg(theme::GREEN)),
+                Span::styled(
+                    format!("{} ", icons.btn_right()),
+                    Style::default().fg(theme::GREEN),
+                ),
             ]))
         } else {
-            Paragraph::new(" Connect ").style(Style::default().fg(theme::GREEN))
+            Paragraph::new(" Connect  ").style(Style::default().fg(theme::GREEN))
         }
         .alignment(Alignment::Right);
         frame.render_widget(connect_btn, bottom_layout[1]);
     }
 
-    if state.show_key_logger {
-        if let Some((key, time)) = &state.last_key_press {
+    if state.ui.show_key_logger {
+        if let Some((key, time)) = &state.ui.last_key_press {
             if time.elapsed() < std::time::Duration::from_secs(2) {
                 let key_text = format!(" {} ", key);
                 let width = key_text.len() as u16 + 2;

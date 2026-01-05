@@ -107,4 +107,61 @@ impl InputState {
     pub fn move_end(&mut self) {
         self.cursor = self.value.chars().count();
     }
+
+    /// Handle common input key events, returns true if the key was handled
+    pub fn handle_key(&mut self, key: &crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        match key.code {
+            KeyCode::Char(c) => {
+                self.insert(c);
+                true
+            }
+            KeyCode::Backspace
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.backspace_word();
+                true
+            }
+            KeyCode::Backspace => {
+                self.backspace();
+                true
+            }
+            KeyCode::Left
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.move_word_left();
+                true
+            }
+            KeyCode::Left => {
+                self.move_left();
+                true
+            }
+            KeyCode::Right
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.move_word_right();
+                true
+            }
+            KeyCode::Right => {
+                self.move_right();
+                true
+            }
+            KeyCode::Home => {
+                self.move_home();
+                true
+            }
+            KeyCode::End => {
+                self.move_end();
+                true
+            }
+            _ => false,
+        }
+    }
 }

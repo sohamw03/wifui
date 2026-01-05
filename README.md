@@ -29,7 +29,7 @@
 
 ## 📦 Installation
 
-Requires Nerd Fonts — install from https://www.nerdfonts.com/
+**Note:** For the best experience, [Nerd Fonts](https://www.nerdfonts.com/) are recommended. However, you can use the `--ascii` flag if you prefer standard text-based icons.
 
 ### Winget
 
@@ -73,6 +73,14 @@ Run the application:
 ```sh
 wifui
 ```
+
+### Command Line Arguments
+
+| Flag | Description |
+| :--- | :--- |
+| `--ascii` | Use ASCII icons (no Nerd Fonts required) |
+| `--show-keys` | Show key logger for debugging |
+| `-v`, `--version` | Print version information |
 
 ### Keybindings
 
