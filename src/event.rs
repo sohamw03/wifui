@@ -1,3 +1,5 @@
+use zeroize::Zeroize;
+
 use crate::{
     app::AppState,
     ui::render,
@@ -294,9 +296,8 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                                 Some(state.manual_ssid_input.value.clone());
                                             state.connection_start_time = Some(Instant::now());
                                             let ssid = state.manual_ssid_input.value.clone();
-                                            let password =
-                                                state.manual_password_input.value.clone();
-                                            let security = state.manual_security.clone();
+                                            
+					    let security = state.manual_security.clone();
                                             let hidden = state.manual_hidden;
 
                                             let (tx, rx) = mpsc::channel(1);
@@ -505,8 +506,8 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                         let _ = tx.send(result).await;
                                     });
                                 }
-                                state.show_password_popup = false;
-                                state.password_input.clear();
+                                password.zeroize(); // erase password in memory
+				state.show_password_popup = false;
                             }
                             event::KeyCode::Char('[')
                                 if key.modifiers.contains(event::KeyModifiers::CONTROL) =>

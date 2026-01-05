@@ -1,3 +1,4 @@
+use zeroize::Zeroize;
 use color_eyre::eyre::{Result, eyre};
 use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
@@ -717,7 +718,7 @@ pub fn connect_with_password(
     cipher: &str,
     hidden: bool,
 ) -> Result<()> {
-    let profile_xml = create_profile_xml(ssid, auth, cipher, Some(password), hidden);
+    let mut profile_xml = create_profile_xml(ssid, auth, cipher, Some(password), hidden);
 
     let (handle, _) = get_wlan_handle()?;
     let guid = get_interface_guid(handle)?;
@@ -740,6 +741,8 @@ pub fn connect_with_password(
             None,
             &mut reason_code,
         );
+	// erase password from memory
+	profile_xml.zeroize();
 
         if result != ERROR_SUCCESS.0 {
             WlanCloseHandle(handle, None);
