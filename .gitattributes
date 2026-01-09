@@ -1,0 +1,6 @@
+# Normalize all text files to LF in the repo
+* text=auto eol=lf
+
+# Ensure binary files are not touched
+*.png binary
+*.gif binary
