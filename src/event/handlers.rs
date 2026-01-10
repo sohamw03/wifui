@@ -325,8 +325,8 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
         }
         event::KeyCode::Char('j') | event::KeyCode::Down => state.next(),
         event::KeyCode::Char('k') | event::KeyCode::Up => state.previous(),
-        event::KeyCode::Char('g') => state.go_to_top(),
-        event::KeyCode::Char('G') => state.go_to_bottom(),
+        event::KeyCode::Char('g') | event::KeyCode::Home => state.go_to_top(),
+        event::KeyCode::Char('G') | event::KeyCode::End => state.go_to_bottom(),
         event::KeyCode::Enter => {
             if let Some(selected) = state.ui.l_state.selected() {
                 if let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned() {

@@ -91,8 +91,8 @@ wifui
 | :--- | :--- |
 | `↑` / `k` | Move Selection Up |
 | `↓` / `j` | Move Selection Down |
-| `g` | Go to Top |
-| `G` | Go to Bottom |
+| `g` / `Home` | Go to Top |
+| `G` / `End` | Go to Bottom |
 | `Enter` | Connect / Disconnect |
 | `n` | Add Manual Network |
 | `r` | Refresh Network List |
