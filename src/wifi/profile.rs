@@ -5,9 +5,12 @@ use quick_xml::writer::Writer;
 use secrecy::{ExposeSecret, SecretString};
 use std::io::Cursor;
 use windows::{
-    Win32::{Foundation::ERROR_SUCCESS, NetworkManagement::WiFi::*},
     core::{PCWSTR, PWSTR},
+    Win32::{Foundation::ERROR_SUCCESS, NetworkManagement::WiFi::*},
 };
+
+/// WLAN_PROFILE_GET_PLAINTEXT_KEY flag to retrieve password from profile
+const WLAN_PROFILE_GET_PLAINTEXT_KEY: u32 = 4;
 
 /// Create a WiFi profile XML document
 pub fn create_profile_xml(
@@ -246,4 +249,46 @@ pub fn forget_network(ssid: &str) -> WifiResult<()> {
         }
     }
     Ok(())
+}
+
+/// Get WiFi password from a saved profile
+/// Returns None if profile doesn't exist or has no password (open network)
+pub fn get_wifi_password(ssid: &str) -> WifiResult<Option<SecretString>> {
+    let handle = WlanHandle::open()?;
+    let guid = handle.get_interface_guid()?;
+
+    unsafe {
+        let profile_name_wide: Vec<u16> = ssid.encode_utf16().chain(std::iter::once(0)).collect();
+        let p_profile_name = PCWSTR(profile_name_wide.as_ptr());
+        let mut p_profile_xml = PWSTR::null();
+        let mut flags = WLAN_PROFILE_GET_PLAINTEXT_KEY;
+
+        let result = WlanGetProfile(
+            handle.as_raw(),
+            &guid,
+            p_profile_name,
+            None,
+            &mut p_profile_xml,
+            Some(&mut flags),
+            None,
+        );
+
+        if result != ERROR_SUCCESS.0 || p_profile_xml.is_null() {
+            return Err(WifiError::ProfileGetFailed { code: result });
+        }
+
+        let xml = p_profile_xml.to_string().unwrap_or_default();
+        WlanFreeMemory(p_profile_xml.as_ptr() as *mut _);
+
+        if let Some(start) = xml.find("<keyMaterial>") {
+            if let Some(end) = xml.find("</keyMaterial>") {
+                let password = xml[start + 13..end].to_string();
+                if !password.is_empty() {
+                    return Ok(Some(SecretString::from(password)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
 }

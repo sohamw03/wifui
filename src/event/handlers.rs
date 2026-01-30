@@ -7,6 +7,22 @@ use secrecy::SecretString;
 use std::time::Instant;
 use tokio::sync::mpsc;
 
+/// Handle keyboard events for the QR code popup
+pub fn handle_qr_popup(key: KeyEvent, state: &mut AppState) -> bool {
+    match key.code {
+        event::KeyCode::Esc | event::KeyCode::Char('q') | event::KeyCode::Enter => {
+            state.ui.show_qr_popup = false;
+            state.ui.qr_code_lines.clear();
+        }
+        event::KeyCode::Char('[') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.ui.show_qr_popup = false;
+            state.ui.qr_code_lines.clear();
+        }
+        _ => {}
+    }
+    false
+}
+
 /// Handle keyboard events for the manual add network popup
 pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
     match key.code {
@@ -459,7 +475,69 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                 }
             }
         }
+        event::KeyCode::Char('s') => {
+            if let Some(selected) = state.ui.l_state.selected() {
+                if let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned() {
+                    if wifi.is_saved {
+                        let ssid = wifi.ssid.clone();
+                        let auth = wifi.authentication.clone();
+                        let password_result = crate::wifi::get_wifi_password(&ssid);
+
+                        match password_result {
+                            Ok(password_opt) => {
+                                let qr_lines = generate_wifi_qr(&ssid, &auth, password_opt.as_ref());
+                                state.ui.qr_code_lines = qr_lines;
+                                state.ui.show_qr_popup = true;
+                            }
+                            Err(_) => {
+                                let qr_lines = generate_wifi_qr(&ssid, &auth, None);
+                                state.ui.qr_code_lines = qr_lines;
+                                state.ui.show_qr_popup = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         _ => {}
     }
     false
+}
+
+/// Generate WiFi QR code in standard format: WIFI:S:ssid;T:auth;P:password;;
+fn generate_wifi_qr(ssid: &str, auth: &str, password: Option<&SecretString>) -> Vec<String> {
+    use qrcode::QrCode;
+    use qrcode::render::unicode;
+    use secrecy::ExposeSecret;
+
+    let auth_type = match auth {
+        "WPA3-SAE" | "WPA3" => "WPA",
+        "WPA2-PSK" | "WPA2" | "WPA-PSK" | "WPA" => "WPA",
+        "Open" | "open" => "nopass",
+        _ => "WPA",
+    };
+
+    let qr_string = if auth_type == "nopass" {
+        format!("WIFI:S:{};T:nopass;;", escape_special_chars(ssid))
+    } else if let Some(pwd) = password {
+        format!("WIFI:S:{};T:{};P:{};;", escape_special_chars(ssid), auth_type, escape_special_chars(pwd.expose_secret()))
+    } else {
+        format!("WIFI:S:{};T:{};;", escape_special_chars(ssid), auth_type)
+    };
+
+    match QrCode::new(&qr_string) {
+        Ok(code) => {
+            let string = code.render::<unicode::Dense1x2>().build();
+            string.lines().map(|s| s.to_string()).collect()
+        }
+        Err(_) => vec!["Error generating QR code".to_string()],
+    }
+}
+
+/// Escape special characters for WiFi QR code format
+fn escape_special_chars(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace(';', "\\;")
+        .replace(',', "\\,")
+        .replace(':', "\\:")
 }

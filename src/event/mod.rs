@@ -8,7 +8,7 @@ use crate::{
     app::AppState,
     config,
     ui::render,
-    wifi::{ConnectionEvent, get_connected_ssid, get_wifi_networks},
+    wifi::{ConnectionEvent, disconnect, get_connected_ssid, get_wifi_networks},
 };
 use color_eyre::eyre::Result;
 use crossterm::{
@@ -16,7 +16,7 @@ use crossterm::{
     event::{self, Event, KeyModifiers},
 };
 use handlers::{
-    handle_main_view, handle_manual_add_popup, handle_password_popup, handle_search_mode,
+    handle_main_view, handle_manual_add_popup, handle_password_popup, handle_qr_popup, handle_search_mode,
 };
 use ratatui::DefaultTerminal;
 use std::time::{Duration, Instant};
@@ -90,6 +90,9 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                         } else {
                             state.ui.l_state.select(Some(0));
                         }
+                    } else {
+                        // No previous selection, select first item
+                        state.ui.l_state.select(Some(0));
                     }
                 }
                 state.refresh.is_refreshing_networks = false;
@@ -112,7 +115,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                             }
                         }
                     }
-                    ConnectionEvent::Disconnected(_) => {
+                    ConnectionEvent::Disconnected => {
                         state.refresh.refresh_burst = config::DISCONNECT_REFRESH_BURST;
                     }
                     ConnectionEvent::Failed {
@@ -184,6 +187,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
         if !state.refresh.is_refreshing_networks
             && !state.ui.show_manual_add_popup
             && !state.ui.show_password_popup
+            && !state.ui.show_qr_popup
             && state.refresh.last_refresh.elapsed() >= refresh_interval
             && state.refresh.last_interaction.elapsed()
                 >= Duration::from_secs(config::INTERACTION_COOLDOWN_SECS)
@@ -205,6 +209,37 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                 .unwrap();
                 let _ = tx.send(result).await;
             });
+        }
+
+        // Startup auto-connect: after 5 seconds, if not connected, connect to strongest saved auto-connect network
+        if !state.refresh.auto_connect_attempted
+            && state.refresh.startup_time.elapsed() >= Duration::from_secs(config::AUTO_CONNECT_DELAY_SECS)
+            && !state.connection.is_connecting
+            && state.network.connected_ssid.is_none()
+        {
+            state.refresh.auto_connect_attempted = true;
+            
+            if let Some(target_ssid) = state.find_best_auto_connect_network() {
+                // Trigger auto-connect
+                state.connection.is_connecting = true;
+                state.connection.target_ssid = Some(target_ssid.clone());
+                state.connection.connection_start_time = Some(Instant::now());
+                
+                let (tx, rx) = mpsc::channel(1);
+                state.connection.connection_result_rx = Some(rx);
+
+                tokio::spawn(async move {
+                    if get_connected_ssid().unwrap_or(None).is_some() {
+                        let _ = tokio::task::spawn_blocking(disconnect).await;
+                    }
+                    let result = tokio::task::spawn_blocking(move || {
+                        crate::wifi::connect_profile(&target_ssid)
+                    })
+                    .await
+                    .unwrap();
+                    let _ = tx.send(result.map_err(|e| e.into())).await;
+                });
+            }
         }
 
         if event::poll(Duration::from_millis(config::EVENT_POLL_MS))? {
@@ -261,7 +296,9 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                     }
 
                     // Route to appropriate handler
-                    let should_quit = if state.ui.show_manual_add_popup {
+                    let should_quit = if state.ui.show_qr_popup {
+                        handle_qr_popup(key, state)
+                    } else if state.ui.show_manual_add_popup {
                         handle_manual_add_popup(key, state)
                     } else if state.ui.show_password_popup {
                         handle_password_popup(key, state)

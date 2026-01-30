@@ -1,4 +1,4 @@
-use crate::error::{WifiError, WifiResult, wlan_reason_to_string};
+use crate::error::{wlan_reason_to_string, WifiError, WifiResult};
 use crate::wifi::handle::WlanHandle;
 use crate::wifi::types::ConnectionEvent;
 use tokio::sync::mpsc::UnboundedSender;
@@ -73,7 +73,7 @@ unsafe extern "system" fn notification_callback(
         if data.NotificationCode == wlan_notification_acm_connection_complete.0 as u32 {
             let _ = sender.send(ConnectionEvent::Connected(ssid));
         } else if data.NotificationCode == wlan_notification_acm_disconnected.0 as u32 {
-            let _ = sender.send(ConnectionEvent::Disconnected(ssid));
+            let _ = sender.send(ConnectionEvent::Disconnected);
         } else if data.NotificationCode == wlan_notification_acm_connection_attempt_fail.0 as u32 {
             let reason_code = conn_data.wlanReasonCode;
             let reason_str = wlan_reason_to_string(reason_code);

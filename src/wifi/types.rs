@@ -2,7 +2,6 @@
 #[derive(Debug, Default, Clone)]
 pub struct WifiInfo {
     pub ssid: String,
-    pub network_type: String,
     pub authentication: String,
     pub encryption: String,
     pub signal: u8,
@@ -19,8 +18,7 @@ pub struct WifiInfo {
 #[derive(Debug, Clone)]
 pub enum ConnectionEvent {
     Connected(String),
-    #[allow(dead_code)]
-    Disconnected(String),
+    Disconnected,
     Failed {
         ssid: String,
         #[allow(dead_code)]

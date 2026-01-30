@@ -236,9 +236,9 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
             if w.is_saved {
                 if w.auto_connect {
-                    ssid = format!("{}{}", ssid, icons.auto_on());
+                    ssid = format!("{} {}", ssid, icons.auto_on());
                 } else {
-                    ssid = format!("{}{}", ssid, icons.auto_off());
+                    ssid = format!("{} {}", ssid, icons.auto_off());
                 }
             }
 
@@ -331,50 +331,94 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             Style::default()
         };
 
+        let label = |text: &str| Span::styled(format!("{:>11} ", text), label_style);
+
+        let sec_icon = if wifi.authentication == "Open" {
+            icons.open()
+        } else {
+            icons.locked()
+        };
+        let saved_icon = icons.saved();
+
+        let signal_bar_width = (wifi.signal as usize / 10).min(10);
+        let signal_color = if is_dimmed {
+            theme::DIMMED
+        } else if wifi.signal > 70 {
+            theme::GREEN
+        } else if wifi.signal > 40 {
+            theme::YELLOW
+        } else {
+            theme::RED
+        };
+        let signal_bar = "█".repeat(signal_bar_width) + &"░".repeat(10 - signal_bar_width);
+
         let mut info = vec![
-            Line::from(vec![
-                Span::styled("SSID: ", label_style),
-                Span::styled(&wifi.ssid, value_style),
-            ]),
-            Line::from(vec![
-                Span::styled("Signal: ", label_style),
-                Span::styled(format!("{}% ", wifi.signal), value_style),
-                // Add signal bar
-                Span::styled(
-                    "█".repeat((wifi.signal as usize / 10).min(10)),
-                    if is_dimmed {
-                        Style::default().fg(theme::DIMMED)
-                    } else if wifi.signal > 70 {
-                        Style::default().fg(theme::GREEN)
-                    } else if wifi.signal > 40 {
-                        Style::default().fg(theme::YELLOW)
-                    } else {
-                        Style::default().fg(theme::RED)
-                    },
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Security: ", label_style),
-                Span::styled(
-                    format!("{} / {}", wifi.authentication, wifi.encryption),
-                    value_style,
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Type: ", label_style),
-                Span::styled(
-                    format!("{} ({})", wifi.phy_type, wifi.network_type),
-                    value_style,
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Channel: ", label_style),
-                Span::styled(
-                    format!(
-                        "{} ({:.1} GHz)",
-                        wifi.channel,
-                        wifi.frequency as f32 / 1_000_000.0
+            if wifi.is_connected {
+                Line::from(vec![
+                    label("Status"),
+                    Span::styled(
+                        format!("{} Connected ", icons.connected().trim()),
+                        if is_dimmed {
+                            Style::default().fg(theme::DIMMED)
+                        } else {
+                            Style::default().fg(theme::GREEN).add_modifier(Modifier::BOLD)
+                        },
                     ),
+                    Span::styled(
+                        format!("{}Saved", saved_icon),
+                        if is_dimmed {
+                            Style::default().fg(theme::DIMMED)
+                        } else {
+                            Style::default().fg(theme::BLUE)
+                        },
+                    ),
+                ])
+            } else if wifi.is_saved {
+                Line::from(vec![
+                    label("Status"),
+                    Span::styled(
+                        format!("{}Saved", saved_icon),
+                        if is_dimmed {
+                            Style::default().fg(theme::DIMMED)
+                        } else {
+                            Style::default().fg(theme::BLUE)
+                        },
+                    ),
+                ])
+            } else {
+                Line::from(vec![
+                    label("Status"),
+                    Span::styled(
+                        "Available",
+                        if is_dimmed {
+                            Style::default().fg(theme::DIMMED)
+                        } else {
+                            value_style
+                        },
+                    ),
+                ])
+            },
+            Line::from(vec![
+                label("SSID"),
+                Span::styled(format!("{}", wifi.ssid), value_style.add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                label("Signal"),
+                Span::styled(format!("{}% ", wifi.signal), value_style),
+                Span::styled(signal_bar, Style::default().fg(signal_color)),
+            ]),
+            Line::from(vec![
+                label("Security"),
+                Span::styled(format!("{}{} / {}", sec_icon, wifi.authentication, wifi.encryption), value_style),
+            ]),
+            Line::from(vec![
+                label("Standard"),
+                Span::styled(format!("{}", wifi.phy_type), value_style),
+            ]),
+            Line::from(vec![
+                label("Channel"),
+                Span::styled(
+                    format!("{} @ {:.3} GHz", wifi.channel, wifi.frequency as f32 / 1_000_000.0),
                     value_style,
                 ),
             ]),
@@ -382,19 +426,19 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
         if wifi.is_saved {
             let auto_text = if wifi.auto_connect {
-                format!("Yes {}", icons.auto_on())
+                format!("{} Enabled", icons.auto_on())
             } else {
-                format!("No {}", icons.auto_off())
+                format!("{} Disabled", icons.auto_off())
             };
             info.push(Line::from(vec![
-                Span::styled("Auto-Connect: ", label_style),
+                label("Auto-Conn"),
                 Span::styled(auto_text, value_style),
             ]));
         }
 
         if let Some(speed) = wifi.link_speed {
             info.push(Line::from(vec![
-                Span::styled("Link Speed: ", label_style),
+                label("Link Speed"),
                 Span::styled(format!("{} Mbps", speed), value_style),
             ]));
         }
@@ -481,12 +525,14 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             Line::from(vec![
                 Span::styled("a", Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" auto-conn • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("s", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" share • ", Style::default().fg(theme::DIMMED)),
                 Span::styled("n", Style::default().fg(theme::FOREGROUND)),
-                Span::styled(" add new • ", Style::default().fg(theme::DIMMED)),
+                Span::styled(" add • ", Style::default().fg(theme::DIMMED)),
                 Span::styled("/", Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" search • ", Style::default().fg(theme::DIMMED)),
                 Span::styled("esc", Style::default().fg(theme::FOREGROUND)),
-                Span::styled(" back/clear", Style::default().fg(theme::DIMMED)),
+                Span::styled(" back", Style::default().fg(theme::DIMMED)),
             ]),
         ]
     };
@@ -867,5 +913,58 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 frame.render_widget(paragraph, key_area);
             }
         }
+    }
+
+    // QR Code popup
+    if state.ui.show_qr_popup {
+        // Calculate QR popup size based on terminal size
+        let qr_height = state.ui.qr_code_lines.len() as u16 + 4; // +4 for borders and padding
+        let qr_width = state.ui.qr_code_lines.first().map(|l| l.len()).unwrap_or(0) as u16 + 4;
+        
+        // Center the popup
+        let qr_x = area.width.saturating_sub(qr_width) / 2;
+        let qr_y = area.height.saturating_sub(qr_height) / 2;
+        
+        let qr_area = Rect::new(qr_x, qr_y, qr_width.min(area.width), qr_height.min(area.height));
+        
+        // Clear background
+        frame.render_widget(Clear, qr_area);
+        
+        // QR code block
+        let qr_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(theme::CYAN))
+            .title(" Share WiFi (Scan with phone) ")
+            .title_alignment(Alignment::Center)
+            .title_style(Style::default().fg(theme::CYAN).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(theme::BACKGROUND));
+        
+        frame.render_widget(qr_block.clone(), qr_area);
+        
+        // Render QR code lines inside the block
+        let inner = qr_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
+        
+        let qr_text = state.ui.qr_code_lines.join("\n");
+        let qr_paragraph = Paragraph::new(qr_text)
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(theme::FOREGROUND).bg(theme::BACKGROUND));
+        
+        frame.render_widget(qr_paragraph, inner);
+        
+        // Help text below QR code
+        let help_area = Rect::new(
+            area.x,
+            qr_area.y + qr_area.height + 1,
+            area.width,
+            1,
+        );
+        let help_text = Paragraph::new("Press ESC, q, or Enter to close")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(theme::DIMMED));
+        frame.render_widget(help_text, help_area);
     }
 }

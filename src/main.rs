@@ -45,25 +45,19 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let mut state = AppState::new(Vec::new(), args.show_keys, args.ascii);
+    // Synchronous startup scan - UI only appears after networks load
+    let (networks, connected) = tokio::task::spawn_blocking(|| {
+        let _ = scan_networks();
+        let networks = get_wifi_networks().unwrap_or_default();
+        let connected = get_connected_ssid().unwrap_or(None);
+        (networks, connected)
+    })
+    .await
+    .unwrap_or_else(|_| (Vec::new(), None));
 
-    // Trigger a scan on startup in background
-    state.refresh.is_refreshing_networks = true;
-    let (tx, rx) = tokio::sync::mpsc::channel(1);
-    state.refresh.network_update_rx = Some(rx);
-
-    tokio::spawn(async move {
-        let result = tokio::task::spawn_blocking(|| {
-            let _ = scan_networks();
-            let networks = get_wifi_networks().unwrap_or_default();
-            let connected = get_connected_ssid().unwrap_or(None);
-            Ok((networks, connected))
-        })
-        .await
-        .unwrap_or_else(|_| Ok((Vec::new(), None)));
-
-        let _ = tx.send(result).await;
-    });
+    let mut state = AppState::new(networks, args.show_keys, args.ascii);
+    state.network.connected_ssid = connected;
+    state.update_filtered_list();
 
     color_eyre::install()?;
     let terminal = ratatui::init();

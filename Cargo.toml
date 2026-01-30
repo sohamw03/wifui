@@ -20,6 +20,7 @@ eula = false
 clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
 color-eyre = { version = "0.6.5", default-features = false }
 crossterm = { version = "0.29.0", default-features = false, features = ["events", "windows"] }
+qrcode = { version = "0.14", default-features = false }
 quick-xml = { version = "0.38.4", default-features = false }
 ratatui = { version = "0.29.0", default-features = false, features = ["crossterm", "underline-color"] }
 secrecy = { version = "0.10.3", default-features = false }

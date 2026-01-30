@@ -317,14 +317,6 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
                 auto_connect = is_profile_auto_connect(&handle, &guid, &ssid);
             }
 
-            let bss_type = match item.dot11BssType {
-                dot11_BSS_type_infrastructure => "Infrastructure",
-                dot11_BSS_type_independent => "Ad-hoc",
-                dot11_BSS_type_any => "Any",
-                _ => "Unknown",
-            }
-            .to_string();
-
             let phy_types = std::slice::from_raw_parts(
                 item.dot11PhyTypes.as_ptr(),
                 item.uNumberOfPhyTypes as usize,
@@ -350,7 +342,6 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
 
             let new_info = WifiInfo {
                 ssid: ssid.clone(),
-                network_type: bss_type,
                 authentication: authentication.clone(),
                 encryption,
                 signal,

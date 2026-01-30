@@ -17,6 +17,7 @@
 - **Network Scanning**: Instantly discover available Wi-Fi networks.
 - **Seamless Connection**: Connect to open or secured networks.
 - **Network Management**: View detailed network info (SSID, Signal Strength, Security Type, Channel).
+- **Share WiFi**: Generate QR codes to share saved network credentials.
 - **Keyboard Driven**: Efficient navigation with Vim-like keybindings.
 
 ## 📸 Screenshots
@@ -98,6 +99,7 @@ wifui
 | `r` | Refresh Network List |
 | `f` | Forget Network |
 | `a` | Toggle Auto Connect |
+| `s` | Share WiFi (QR Code) |
 | `/` | Search Networks |
 | `q` / `Ctrl + c` | Quit |
 | `Esc` | Back / Clear Search / Quit |

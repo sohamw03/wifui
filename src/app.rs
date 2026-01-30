@@ -1,7 +1,7 @@
 use crate::{
     config::{self, IconSet},
     input::InputState,
-    wifi::{ConnectionEvent, WifiInfo, WifiListener, start_wifi_listener},
+    wifi::{start_wifi_listener, ConnectionEvent, WifiInfo, WifiListener},
 };
 use color_eyre::eyre::Result;
 use ratatui::widgets::ListState;
@@ -33,6 +33,8 @@ pub struct UiState {
     pub is_searching: bool,
     pub show_password_popup: bool,
     pub show_manual_add_popup: bool,
+    pub show_qr_popup: bool,
+    pub qr_code_lines: Vec<String>,
     pub error_message: Option<String>,
     pub loading_frame: usize,
     pub show_key_logger: bool,
@@ -41,12 +43,14 @@ pub struct UiState {
 }
 
 impl UiState {
-    pub fn new(show_key_logger: bool, use_ascii_icons: bool) -> Self {
+    pub fn new(show_key_logger: bool, use_ascii_icons: bool, has_networks: bool) -> Self {
         Self {
-            l_state: ListState::default().with_selected(Some(0)),
+            l_state: ListState::default().with_selected(if has_networks { Some(0) } else { None }),
             is_searching: false,
             show_password_popup: false,
             show_manual_add_popup: false,
+            show_qr_popup: false,
+            qr_code_lines: Vec::new(),
             error_message: None,
             loading_frame: 0,
             show_key_logger,
@@ -131,6 +135,8 @@ pub struct RefreshState {
     pub is_refreshing_networks: bool,
     pub network_update_rx: Option<Receiver<Result<(Vec<WifiInfo>, Option<String>)>>>,
     pub refresh_burst: u8,
+    pub startup_time: Instant,
+    pub auto_connect_attempted: bool,
 }
 
 impl RefreshState {
@@ -142,6 +148,8 @@ impl RefreshState {
             is_refreshing_networks: false,
             network_update_rx: None,
             refresh_burst: config::STARTUP_REFRESH_BURST,
+            startup_time: Instant::now(),
+            auto_connect_attempted: false,
         }
     }
 }
@@ -158,9 +166,10 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(wifi_list: Vec<WifiInfo>, show_key_logger: bool, use_ascii_icons: bool) -> AppState {
+        let has_networks = !wifi_list.is_empty();
         AppState {
             network: NetworkState::new(wifi_list),
-            ui: UiState::new(show_key_logger, use_ascii_icons),
+            ui: UiState::new(show_key_logger, use_ascii_icons, has_networks),
             connection: ConnectionState::new(),
             inputs: InputStates::new(),
             refresh: RefreshState::new(),
@@ -247,6 +256,17 @@ impl AppState {
 
     /// Check if any popup is open (for dimming the background)
     pub fn is_popup_open(&self) -> bool {
-        self.ui.show_manual_add_popup || self.ui.show_password_popup
+        self.ui.show_manual_add_popup || self.ui.show_password_popup || self.ui.show_qr_popup
+    }
+
+    /// Find the strongest saved network with auto_connect enabled
+    /// Returns Some(ssid) if found, None otherwise
+    pub fn find_best_auto_connect_network(&self) -> Option<String> {
+        self.network
+            .wifi_list
+            .iter()
+            .filter(|w| w.is_saved && w.auto_connect)
+            .max_by_key(|w| w.signal)
+            .map(|w| w.ssid.clone())
     }
 }

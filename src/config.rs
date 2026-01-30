@@ -15,6 +15,7 @@ pub const BURST_REFRESH_INTERVAL_SECS: u64 = 1;
 pub const INTERACTION_COOLDOWN_SECS: u64 = 1;
 pub const EVENT_POLL_MS: u64 = 100;
 pub const MANUAL_REFRESH_DEBOUNCE_MS: u64 = 500;
+pub const AUTO_CONNECT_DELAY_SECS: u64 = 5;
 
 // Refresh burst counts
 pub const STARTUP_REFRESH_BURST: u8 = 5;
@@ -31,10 +32,10 @@ pub mod icons {
         pub const OPEN: &str = " "; // nf-fa-rss
         pub const LOCKED: &str = " "; // nf-fa-lock
         pub const CONNECTED: &str = " 󰖩"; // nf-md-wifi_check
-        pub const AUTO_ON: &str = " 󰁪"; // nf-md-bell
-        pub const AUTO_OFF: &str = " 󱧧"; // nf-md-bell_off
+        pub const AUTO_ON: &str = "󰁪"; // nf-md-bell
+        pub const AUTO_OFF: &str = "󱧧"; // nf-md-bell_off
         pub const HIGHLIGHT: &str = "  "; // Two spaces for alignment
-        // UI symbols for help bar and popups
+                                          // UI symbols for help bar and popups
         pub const ENTER: &str = "󰌑"; // nf-md-keyboard_return
         pub const TAB_NEXT: &str = "⇥ / ↓";
         pub const TAB_PREV: &str = "⇤ / ↑";
@@ -52,8 +53,8 @@ pub mod icons {
         pub const OPEN: &str = "[O] ";
         pub const LOCKED: &str = "[*] ";
         pub const CONNECTED: &str = " <-";
-        pub const AUTO_ON: &str = " (A)";
-        pub const AUTO_OFF: &str = " (M)";
+        pub const AUTO_ON: &str = "(A)";
+        pub const AUTO_OFF: &str = "(M)";
         pub const HIGHLIGHT: &str = "> ";
         // UI symbols for help bar and popups
         pub const ENTER: &str = "Enter";
