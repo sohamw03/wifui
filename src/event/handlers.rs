@@ -2,6 +2,7 @@ use crate::app::AppState;
 use crate::config;
 use crate::error::WifiError;
 use crate::wifi::{disconnect, get_connected_ssid, get_wifi_networks};
+use color_eyre::eyre::eyre;
 use crossterm::event::{self, KeyEvent, KeyModifiers};
 use secrecy::SecretString;
 use std::time::Instant;
@@ -74,9 +75,9 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
                                 } else {
                                     // Map security string to auth/cipher
                                     let (auth, cipher) = match security.as_str() {
-                                        "WPA3-SAE" => ("WPA3-SAE", "AES"),
-                                        "WPA2-PSK" => ("WPA2-PSK", "AES"),
-                                        "WPA-PSK" => ("WPA-PSK", "AES"),
+                                        "WPA3-Personal" => ("WPA3-SAE", "AES"),
+                                        "WPA2-Personal" => ("WPA2-PSK", "AES"),
+                                        "WPA-Personal" => ("WPA-PSK", "AES"),
                                         "WEP" => ("Shared", "WEP"),
                                         _ => ("WPA2-PSK", "AES"),
                                     };
@@ -87,7 +88,7 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
                             })
                             .await
                             .unwrap_or_else(|e| Err(WifiError::Internal(e.to_string())));
-                            let _ = tx.send(result.map_err(|e| e.into())).await;
+                            let _ = tx.send(result.map_err(|e: WifiError| e.into())).await;
                         });
 
                         state.ui.show_manual_add_popup = false;
@@ -111,7 +112,13 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
                 1 => state.inputs.manual_password_input.insert(c),
                 2 => {
                     // Handle h/j/k/l for Security field
-                    let options = ["WPA2-PSK", "WPA3-SAE", "Open", "WPA-PSK", "WEP"];
+                    let options = [
+                        "WPA2-Personal",
+                        "WPA3-Personal",
+                        "Open",
+                        "WPA-Personal",
+                        "WEP",
+                    ];
                     let current_idx = options
                         .iter()
                         .position(|&s| s == state.inputs.manual_security)
@@ -166,7 +173,13 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
             0 => state.inputs.manual_ssid_input.move_left(),
             1 => state.inputs.manual_password_input.move_left(),
             2 => {
-                let options = ["WPA2-PSK", "WPA3-SAE", "Open", "WPA-PSK", "WEP"];
+                let options = [
+                    "WPA2-Personal",
+                    "WPA3-Personal",
+                    "Open",
+                    "WPA-Personal",
+                    "WEP",
+                ];
                 let current_idx = options
                     .iter()
                     .position(|&s| s == state.inputs.manual_security)
@@ -195,7 +208,13 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
             0 => state.inputs.manual_ssid_input.move_right(),
             1 => state.inputs.manual_password_input.move_right(),
             2 => {
-                let options = ["WPA2-PSK", "WPA3-SAE", "Open", "WPA-PSK", "WEP"];
+                let options = [
+                    "WPA2-Personal",
+                    "WPA3-Personal",
+                    "Open",
+                    "WPA-Personal",
+                    "WEP",
+                ];
                 let current_idx = options
                     .iter()
                     .position(|&s| s == state.inputs.manual_security)
@@ -260,7 +279,7 @@ pub fn handle_password_popup(key: KeyEvent, state: &mut AppState) -> bool {
                     })
                     .await
                     .unwrap_or_else(|e| Err(WifiError::Internal(e.to_string())));
-                    let _ = tx.send(result.map_err(|e| e.into())).await;
+                    let _ = tx.send(result.map_err(|e: WifiError| e.into())).await;
                 });
             }
             state.ui.show_password_popup = false;
@@ -356,8 +375,12 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                         let (tx, rx) = mpsc::channel(1);
                         state.connection.connection_result_rx = Some(rx);
                         tokio::spawn(async move {
-                            let result = tokio::task::spawn_blocking(disconnect).await.unwrap();
-                            let _ = tx.send(result.map_err(|e| e.into())).await;
+                            let result = tokio::task::spawn_blocking(disconnect).await;
+                            let result = match result {
+                                Ok(inner) => inner.map_err(|e: WifiError| e.into()),
+                                Err(e) => Err(eyre!(e.to_string())),
+                            };
+                            let _ = tx.send(result).await;
                         });
                     } else if wifi.authentication != "Open" {
                         // Check if profile exists
@@ -377,9 +400,12 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                                 let result = tokio::task::spawn_blocking(move || {
                                     crate::wifi::connect_profile(&ssid)
                                 })
-                                .await
-                                .unwrap();
-                                let _ = tx.send(result.map_err(|e| e.into())).await;
+                                .await;
+                                let result = match result {
+                                    Ok(inner) => inner.map_err(|e: WifiError| e.into()),
+                                    Err(e) => Err(eyre!(e.to_string())),
+                                };
+                                let _ = tx.send(result).await;
                             });
                         } else {
                             state.ui.show_password_popup = true;
@@ -401,9 +427,12 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                             let result = tokio::task::spawn_blocking(move || {
                                 crate::wifi::connect_open(&ssid, false)
                             })
-                            .await
-                            .unwrap();
-                            let _ = tx.send(result.map_err(|e| e.into())).await;
+                            .await;
+                            let result = match result {
+                                Ok(inner) => inner.map_err(|e: WifiError| e.into()),
+                                Err(e) => Err(eyre!(e.to_string())),
+                            };
+                            let _ = tx.send(result).await;
                         });
                     }
                 }
@@ -429,8 +458,11 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                     let connected = get_connected_ssid()?;
                     Ok((networks, connected))
                 })
-                .await
-                .unwrap();
+                .await;
+                let result = match result {
+                    Ok(inner) => inner.map_err(|e: WifiError| e.into()),
+                    Err(e) => Err(eyre!(e.to_string())),
+                };
                 let _ = tx.send(result).await;
             });
         }
@@ -447,9 +479,12 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                             let result = tokio::task::spawn_blocking(move || {
                                 crate::wifi::set_auto_connect(&ssid, auto_connect)
                             })
-                            .await
-                            .unwrap();
-                            let _ = tx.send(result.map_err(|e| e.into())).await;
+                            .await;
+                            let result = match result {
+                                Ok(inner) => inner.map_err(|e: WifiError| e.into()),
+                                Err(e) => Err(eyre!(e.to_string())),
+                            };
+                            let _ = tx.send(result).await;
                         });
                     }
                 }
@@ -467,9 +502,12 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                             let result = tokio::task::spawn_blocking(move || {
                                 crate::wifi::forget_network(&ssid)
                             })
-                            .await
-                            .unwrap();
-                            let _ = tx.send(result.map_err(|e| e.into())).await;
+                            .await;
+                            let result = match result {
+                                Ok(inner) => inner.map_err(|e: WifiError| e.into()),
+                                Err(e) => Err(eyre!(e.to_string())),
+                            };
+                            let _ = tx.send(result).await;
                         });
                     }
                 }

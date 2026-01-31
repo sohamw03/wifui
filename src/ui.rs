@@ -9,6 +9,23 @@ use ratatui::{
     },
 };
 
+fn display_auth_name(auth: &str) -> &str {
+    match auth {
+        "Open" => "Open",
+        "WPA-PSK" => "WPA-Personal",
+        "WPA2-PSK" => "WPA2-Personal",
+        "WPA3-SAE" => "WPA3-Personal",
+        "WPA" => "WPA-Enterprise",
+        "WPA2" => "WPA2-Enterprise",
+        "WPA3" | "WPA3ENT" | "WPA3ENT192" => "WPA3-Enterprise",
+        "Shared" => "WEP (Shared)",
+        "WEP" => "WEP",
+        "OWE" => "Enhanced Open (OWE)",
+        "WPA-None" => "WPA-None",
+        _ => auth,
+    }
+}
+
 pub fn render(frame: &mut Frame, state: &mut AppState) {
     let area = frame.area();
     let is_dimmed = state.is_popup_open();
@@ -415,7 +432,12 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             Line::from(vec![
                 label("Security"),
                 Span::styled(
-                    format!("{}{} / {}", sec_icon, wifi.authentication, wifi.encryption),
+                    format!(
+                        "{}{} / {}",
+                        sec_icon,
+                        display_auth_name(&wifi.authentication),
+                        wifi.encryption
+                    ),
                     value_style,
                 ),
             ]),
@@ -471,7 +493,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 .add_modifier(Modifier::BOLD)
         };
 
-        let paragraph = Paragraph::new(info).wrap(Wrap { trim: true }).block(
+        let paragraph = Paragraph::new(info).wrap(Wrap { trim: false }).block(
             Block::default()
                 .title(" Details ")
                 .title_style(details_title_style)

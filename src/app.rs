@@ -113,7 +113,7 @@ impl InputStates {
             search_input: InputState::new(),
             manual_ssid_input: InputState::new(),
             manual_password_input: InputState::new(),
-            manual_security: "WPA2-PSK".to_string(),
+            manual_security: "WPA2-Personal".to_string(),
             manual_hidden: false,
             manual_input_field: 0,
         }

@@ -51,12 +51,14 @@ pub fn create_profile_xml(
 
     let (xml_auth, xml_cipher) = match auth {
         "WPA3-SAE" => ("WPA3SAE", "AES"),
-        "WPA3" => ("WPA3", "AES"),
+        "WPA3ENT" => ("WPA3ENT", "AES"),
+        "WPA3ENT192" => ("WPA3ENT192", "AES"),
+        "WPA3" => ("WPA3ENT192", "AES"),
         "WPA2-PSK" => ("WPA2PSK", "AES"),
         "WPA2" => ("WPA2", "AES"),
         "WPA-PSK" => ("WPAPSK", if cipher == "AES" { "AES" } else { "TKIP" }),
         "WPA" => ("WPA", if cipher == "AES" { "AES" } else { "TKIP" }),
-        "Shared" => ("shared", "WEP"),
+        "Shared" | "WEP" => ("shared", "WEP"),
         "Open" | "open" => ("open", "none"),
         _ => ("WPA2PSK", "AES"),
     };
@@ -80,7 +82,7 @@ pub fn create_profile_xml(
 
     let _ = writer.write_event(Event::End(BytesEnd::new("WLANProfile")));
 
-    String::from_utf8(writer.into_inner().into_inner()).unwrap()
+    String::from_utf8(writer.into_inner().into_inner()).unwrap_or_default()
 }
 
 fn write_element<W: std::io::Write>(writer: &mut Writer<W>, name: &str, value: &str) {

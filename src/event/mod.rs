@@ -10,7 +10,7 @@ use crate::{
     ui::render,
     wifi::{ConnectionEvent, disconnect, get_connected_ssid, get_wifi_networks},
 };
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, eyre};
 use crossterm::{
     cursor::SetCursorStyle,
     event::{self, Event, KeyModifiers},
@@ -53,8 +53,11 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                         let connected = get_connected_ssid()?;
                         Ok((networks, connected))
                     })
-                    .await
-                    .unwrap();
+                    .await;
+                    let result = match result {
+                        Ok(inner) => inner,
+                        Err(e) => Err(eyre!(e.to_string())),
+                    };
                     let _ = tx.send(result).await;
                 });
             }
@@ -206,8 +209,11 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                     let connected = get_connected_ssid()?;
                     Ok((networks, connected))
                 })
-                .await
-                .unwrap();
+                .await;
+                let result = match result {
+                    Ok(inner) => inner,
+                    Err(e) => Err(eyre!(e.to_string())),
+                };
                 let _ = tx.send(result).await;
             });
         }
@@ -237,9 +243,12 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                     let result = tokio::task::spawn_blocking(move || {
                         crate::wifi::connect_profile(&target_ssid)
                     })
-                    .await
-                    .unwrap();
-                    let _ = tx.send(result.map_err(|e| e.into())).await;
+                    .await;
+                    let result = match result {
+                        Ok(inner) => inner.map_err(|e| e.into()),
+                        Err(e) => Err(eyre!(e.to_string())),
+                    };
+                    let _ = tx.send(result).await;
                 });
             }
         }
@@ -249,7 +258,10 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                 state.refresh.last_interaction = Instant::now();
                 if key.kind == event::KeyEventKind::Press {
                     // Log key press if enabled
-                    if state.ui.show_key_logger {
+                    if state.ui.show_key_logger
+                        && !state.ui.show_password_popup
+                        && !state.ui.show_manual_add_popup
+                    {
                         let mut key_str = String::new();
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
                             key_str.push_str("Ctrl+");
