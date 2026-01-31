@@ -16,6 +16,6 @@ pub use connection::{
     get_wifi_networks,
 };
 pub use listener::{WifiListener, start_wifi_listener};
-pub use profile::{forget_network, get_saved_profiles, set_auto_connect, get_wifi_password};
+pub use profile::{forget_network, get_saved_profiles, get_wifi_password, set_auto_connect};
 pub use scanning::scan_networks;
 pub use types::{ConnectionEvent, WifiInfo};

@@ -35,7 +35,7 @@ pub mod icons {
         pub const AUTO_ON: &str = "󰁪"; // nf-md-bell
         pub const AUTO_OFF: &str = "󱧧"; // nf-md-bell_off
         pub const HIGHLIGHT: &str = "  "; // Two spaces for alignment
-                                          // UI symbols for help bar and popups
+        // UI symbols for help bar and popups
         pub const ENTER: &str = "󰌑"; // nf-md-keyboard_return
         pub const TAB_NEXT: &str = "⇥ / ↓";
         pub const TAB_PREV: &str = "⇤ / ↑";

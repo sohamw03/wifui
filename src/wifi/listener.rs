@@ -1,4 +1,4 @@
-use crate::error::{wlan_reason_to_string, WifiError, WifiResult};
+use crate::error::{WifiError, WifiResult, wlan_reason_to_string};
 use crate::wifi::handle::WlanHandle;
 use crate::wifi::types::ConnectionEvent;
 use tokio::sync::mpsc::UnboundedSender;

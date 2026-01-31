@@ -485,7 +485,8 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
 
                         match password_result {
                             Ok(password_opt) => {
-                                let qr_lines = generate_wifi_qr(&ssid, &auth, password_opt.as_ref());
+                                let qr_lines =
+                                    generate_wifi_qr(&ssid, &auth, password_opt.as_ref());
                                 state.ui.qr_code_lines = qr_lines;
                                 state.ui.show_qr_popup = true;
                             }
@@ -520,7 +521,12 @@ fn generate_wifi_qr(ssid: &str, auth: &str, password: Option<&SecretString>) -> 
     let qr_string = if auth_type == "nopass" {
         format!("WIFI:S:{};T:nopass;;", escape_special_chars(ssid))
     } else if let Some(pwd) = password {
-        format!("WIFI:S:{};T:{};P:{};;", escape_special_chars(ssid), auth_type, escape_special_chars(pwd.expose_secret()))
+        format!(
+            "WIFI:S:{};T:{};P:{};;",
+            escape_special_chars(ssid),
+            auth_type,
+            escape_special_chars(pwd.expose_secret())
+        )
     } else {
         format!("WIFI:S:{};T:{};;", escape_special_chars(ssid), auth_type)
     };

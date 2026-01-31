@@ -1,7 +1,7 @@
 use crate::{
     config::{self, IconSet},
     input::InputState,
-    wifi::{start_wifi_listener, ConnectionEvent, WifiInfo, WifiListener},
+    wifi::{ConnectionEvent, WifiInfo, WifiListener, start_wifi_listener},
 };
 use color_eyre::eyre::Result;
 use ratatui::widgets::ListState;

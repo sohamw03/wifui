@@ -5,8 +5,8 @@ use quick_xml::writer::Writer;
 use secrecy::{ExposeSecret, SecretString};
 use std::io::Cursor;
 use windows::{
-    core::{PCWSTR, PWSTR},
     Win32::{Foundation::ERROR_SUCCESS, NetworkManagement::WiFi::*},
+    core::{PCWSTR, PWSTR},
 };
 
 /// WLAN_PROFILE_GET_PLAINTEXT_KEY flag to retrieve password from profile

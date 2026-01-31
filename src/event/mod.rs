@@ -16,7 +16,8 @@ use crossterm::{
     event::{self, Event, KeyModifiers},
 };
 use handlers::{
-    handle_main_view, handle_manual_add_popup, handle_password_popup, handle_qr_popup, handle_search_mode,
+    handle_main_view, handle_manual_add_popup, handle_password_popup, handle_qr_popup,
+    handle_search_mode,
 };
 use ratatui::DefaultTerminal;
 use std::time::{Duration, Instant};
@@ -213,18 +214,19 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
 
         // Startup auto-connect: after 5 seconds, if not connected, connect to strongest saved auto-connect network
         if !state.refresh.auto_connect_attempted
-            && state.refresh.startup_time.elapsed() >= Duration::from_secs(config::AUTO_CONNECT_DELAY_SECS)
+            && state.refresh.startup_time.elapsed()
+                >= Duration::from_secs(config::AUTO_CONNECT_DELAY_SECS)
             && !state.connection.is_connecting
             && state.network.connected_ssid.is_none()
         {
             state.refresh.auto_connect_attempted = true;
-            
+
             if let Some(target_ssid) = state.find_best_auto_connect_network() {
                 // Trigger auto-connect
                 state.connection.is_connecting = true;
                 state.connection.target_ssid = Some(target_ssid.clone());
                 state.connection.connection_start_time = Some(Instant::now());
-                
+
                 let (tx, rx) = mpsc::channel(1);
                 state.connection.connection_result_rx = Some(rx);
 

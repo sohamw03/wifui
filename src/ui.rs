@@ -91,9 +91,9 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
     });
 
     let mut constraints = vec![
-        Constraint::Min(10),   // Network list
-        Constraint::Length(9), // Details
-        Constraint::Length(2), // Bottom bar
+        Constraint::Min(9),     // Network list
+        Constraint::Length(10), // Details
+        Constraint::Length(2),  // Bottom bar
     ];
 
     if state.ui.is_searching || !state.inputs.search_input.value.is_empty() {
@@ -361,7 +361,9 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                         if is_dimmed {
                             Style::default().fg(theme::DIMMED)
                         } else {
-                            Style::default().fg(theme::GREEN).add_modifier(Modifier::BOLD)
+                            Style::default()
+                                .fg(theme::GREEN)
+                                .add_modifier(Modifier::BOLD)
                         },
                     ),
                     Span::styled(
@@ -400,7 +402,10 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             },
             Line::from(vec![
                 label("SSID"),
-                Span::styled(format!("{}", wifi.ssid), value_style.add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{}", wifi.ssid),
+                    value_style.add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![
                 label("Signal"),
@@ -409,7 +414,10 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             ]),
             Line::from(vec![
                 label("Security"),
-                Span::styled(format!("{}{} / {}", sec_icon, wifi.authentication, wifi.encryption), value_style),
+                Span::styled(
+                    format!("{}{} / {}", sec_icon, wifi.authentication, wifi.encryption),
+                    value_style,
+                ),
             ]),
             Line::from(vec![
                 label("Standard"),
@@ -418,7 +426,11 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             Line::from(vec![
                 label("Channel"),
                 Span::styled(
-                    format!("{} @ {:.3} GHz", wifi.channel, wifi.frequency as f32 / 1_000_000.0),
+                    format!(
+                        "{} @ {:.3} GHz",
+                        wifi.channel,
+                        wifi.frequency as f32 / 1_000_000.0
+                    ),
                     value_style,
                 ),
             ]),
@@ -459,7 +471,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 .add_modifier(Modifier::BOLD)
         };
 
-        let paragraph = Paragraph::new(info).block(
+        let paragraph = Paragraph::new(info).wrap(Wrap { trim: true }).block(
             Block::default()
                 .title(" Details ")
                 .title_style(details_title_style)
@@ -920,16 +932,21 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         // Calculate QR popup size based on terminal size
         let qr_height = state.ui.qr_code_lines.len() as u16 + 4; // +4 for borders and padding
         let qr_width = state.ui.qr_code_lines.first().map(|l| l.len()).unwrap_or(0) as u16 + 4;
-        
+
         // Center the popup
         let qr_x = area.width.saturating_sub(qr_width) / 2;
         let qr_y = area.height.saturating_sub(qr_height) / 2;
-        
-        let qr_area = Rect::new(qr_x, qr_y, qr_width.min(area.width), qr_height.min(area.height));
-        
+
+        let qr_area = Rect::new(
+            qr_x,
+            qr_y,
+            qr_width.min(area.width),
+            qr_height.min(area.height),
+        );
+
         // Clear background
         frame.render_widget(Clear, qr_area);
-        
+
         // QR code block
         let qr_block = Block::default()
             .borders(Borders::ALL)
@@ -937,31 +954,30 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .border_style(Style::default().fg(theme::CYAN))
             .title(" Share WiFi (Scan with phone) ")
             .title_alignment(Alignment::Center)
-            .title_style(Style::default().fg(theme::CYAN).add_modifier(Modifier::BOLD))
+            .title_style(
+                Style::default()
+                    .fg(theme::CYAN)
+                    .add_modifier(Modifier::BOLD),
+            )
             .style(Style::default().bg(theme::BACKGROUND));
-        
+
         frame.render_widget(qr_block.clone(), qr_area);
-        
+
         // Render QR code lines inside the block
         let inner = qr_area.inner(Margin {
             vertical: 1,
             horizontal: 1,
         });
-        
+
         let qr_text = state.ui.qr_code_lines.join("\n");
         let qr_paragraph = Paragraph::new(qr_text)
             .alignment(Alignment::Center)
             .style(Style::default().fg(theme::FOREGROUND).bg(theme::BACKGROUND));
-        
+
         frame.render_widget(qr_paragraph, inner);
-        
+
         // Help text below QR code
-        let help_area = Rect::new(
-            area.x,
-            qr_area.y + qr_area.height + 1,
-            area.width,
-            1,
-        );
+        let help_area = Rect::new(area.x, qr_area.y + qr_area.height + 1, area.width, 1);
         let help_text = Paragraph::new("Press ESC, q, or Enter to close")
             .alignment(Alignment::Center)
             .style(Style::default().fg(theme::DIMMED));
