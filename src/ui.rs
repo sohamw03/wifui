@@ -998,11 +998,14 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
         frame.render_widget(qr_paragraph, inner);
 
-        // Help text below QR code
-        let help_area = Rect::new(area.x, qr_area.y + qr_area.height + 1, area.width, 1);
-        let help_text = Paragraph::new("Press ESC, q, or Enter to close")
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(theme::DIMMED));
-        frame.render_widget(help_text, help_area);
+        // Help text below QR code (clamp to terminal bounds)
+        let help_y = qr_area.y.saturating_add(qr_area.height).saturating_add(1);
+        if help_y < area.y.saturating_add(area.height) && area.width > 0 {
+            let help_area = Rect::new(area.x, help_y, area.width, 1);
+            let help_text = Paragraph::new("Press ESC, q, or Enter to close")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(theme::DIMMED));
+            frame.render_widget(help_text, help_area);
+        }
     }
 }

@@ -95,7 +95,7 @@ wifui
 | `g` / `Home` | Go to Top |
 | `G` / `End` | Go to Bottom |
 | `Enter` | Connect / Disconnect |
-| `n` | Add Manual Network |
+| `n` | Add New Network Manually |
 | `r` | Refresh Network List |
 | `f` | Forget Network |
 | `a` | Toggle Auto Connect |
