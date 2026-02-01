@@ -27,6 +27,8 @@
 | ![Home](images/main.png) | ![Search](images/addnetwork.png) |
 | Password | Search |
 | ![Password](images/password.png) | ![Search](images/search.png) |
+| Share |
+| ![Share](images/Share.png) |
 
 ## 📦 Installation
 
