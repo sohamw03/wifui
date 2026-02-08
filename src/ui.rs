@@ -215,6 +215,51 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         frame.render_widget(search_text, area);
     }
 
+    if state.refresh.is_initial_loading {
+        let spinner_frame = state.ui.loading_frame % config::LOADING_CHARS.len();
+        let spinner_char = config::LOADING_CHARS[spinner_frame];
+
+        let combined_area = Rect {
+            x: list_area.x,
+            y: list_area.y,
+            width: list_area.width,
+            height: list_area.height + details_area.height,
+        };
+
+        let inner_height = combined_area.height.saturating_sub(2);
+        let text_height = 2u16;
+        let top_padding = inner_height.saturating_sub(text_height) / 2;
+
+        let padded_block = Block::default()
+            .title(" Networks ")
+            .title_style(
+                Style::default()
+                    .fg(theme::BLUE)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(theme::BLUE))
+            .padding(Padding::new(0, 0, top_padding, 0));
+
+        let spinner_paragraph = Paragraph::new(vec![
+            Line::from(Span::styled(
+                spinner_char,
+                Style::default()
+                    .fg(theme::CYAN)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "Scanning networks...",
+                Style::default().fg(theme::FOREGROUND),
+            )),
+        ])
+        .block(padded_block)
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: false });
+
+        frame.render_widget(spinner_paragraph, combined_area);
+    } else {
     let list_items: Vec<ListItem> = state
         .network
         .filtered_wifi_list
@@ -503,6 +548,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 .padding(Padding::new(1, 1, 0, 0)),
         );
         frame.render_widget(paragraph, details_area);
+    }
     }
 
     let help_text = if state.ui.show_password_popup {

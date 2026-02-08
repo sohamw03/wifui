@@ -137,6 +137,7 @@ pub struct RefreshState {
     pub refresh_burst: u8,
     pub startup_time: Instant,
     pub auto_connect_attempted: bool,
+    pub is_initial_loading: bool,
 }
 
 impl RefreshState {
@@ -150,6 +151,7 @@ impl RefreshState {
             refresh_burst: config::STARTUP_REFRESH_BURST,
             startup_time: Instant::now(),
             auto_connect_attempted: false,
+            is_initial_loading: true,
         }
     }
 }

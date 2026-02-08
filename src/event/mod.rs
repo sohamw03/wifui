@@ -100,6 +100,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                     }
                 }
                 state.refresh.is_refreshing_networks = false;
+                state.refresh.is_initial_loading = false;
                 state.refresh.network_update_rx = None;
                 state.refresh.last_refresh = Instant::now();
             }
@@ -328,8 +329,8 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                 }
             }
         } else {
-            // Update loading animation frame if connecting
-            if state.connection.is_connecting {
+
+            if state.connection.is_connecting || state.refresh.is_initial_loading {
                 state.ui.loading_frame = (state.ui.loading_frame + 1) % 10;
             }
         }
