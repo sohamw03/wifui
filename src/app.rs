@@ -135,8 +135,6 @@ pub struct RefreshState {
     pub is_refreshing_networks: bool,
     pub network_update_rx: Option<Receiver<Result<(Vec<WifiInfo>, Option<String>)>>>,
     pub refresh_burst: u8,
-    pub startup_time: Instant,
-    pub auto_connect_attempted: bool,
     pub is_initial_loading: bool,
 }
 
@@ -149,8 +147,6 @@ impl RefreshState {
             is_refreshing_networks: false,
             network_update_rx: None,
             refresh_burst: config::STARTUP_REFRESH_BURST,
-            startup_time: Instant::now(),
-            auto_connect_attempted: false,
             is_initial_loading: true,
         }
     }
@@ -259,16 +255,5 @@ impl AppState {
     /// Check if any popup is open (for dimming the background)
     pub fn is_popup_open(&self) -> bool {
         self.ui.show_manual_add_popup || self.ui.show_password_popup || self.ui.show_qr_popup
-    }
-
-    /// Find the strongest saved network with auto_connect enabled
-    /// Returns Some(ssid) if found, None otherwise
-    pub fn find_best_auto_connect_network(&self) -> Option<String> {
-        self.network
-            .wifi_list
-            .iter()
-            .filter(|w| w.is_saved && w.auto_connect)
-            .max_by_key(|w| w.signal)
-            .map(|w| w.ssid.clone())
     }
 }

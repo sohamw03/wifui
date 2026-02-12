@@ -8,7 +8,7 @@ use crate::{
     app::AppState,
     config,
     ui::render,
-    wifi::{ConnectionEvent, disconnect, get_connected_ssid, get_wifi_networks},
+    wifi::{ConnectionEvent, get_connected_ssid, get_wifi_networks},
 };
 use color_eyre::eyre::{Result, eyre};
 use crossterm::{
@@ -133,15 +133,6 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                                 state.connection.connection_start_time = None;
                                 state.ui.error_message =
                                     Some(format!("Connection failed: {}", reason_str));
-
-                                // Forget the failed profile to prevent stale saved entries
-                                let ssid_clone = ssid.clone();
-                                tokio::spawn(async move {
-                                    let _ = tokio::task::spawn_blocking(move || {
-                                        crate::wifi::forget_network(&ssid_clone)
-                                    })
-                                    .await;
-                                });
                             }
                         }
                     }
@@ -217,41 +208,6 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                 };
                 let _ = tx.send(result).await;
             });
-        }
-
-        // Startup auto-connect: after 5 seconds, if not connected, connect to strongest saved auto-connect network
-        if !state.refresh.auto_connect_attempted
-            && state.refresh.startup_time.elapsed()
-                >= Duration::from_secs(config::AUTO_CONNECT_DELAY_SECS)
-            && !state.connection.is_connecting
-            && state.network.connected_ssid.is_none()
-        {
-            state.refresh.auto_connect_attempted = true;
-
-            if let Some(target_ssid) = state.find_best_auto_connect_network() {
-                // Trigger auto-connect
-                state.connection.is_connecting = true;
-                state.connection.target_ssid = Some(target_ssid.clone());
-                state.connection.connection_start_time = Some(Instant::now());
-
-                let (tx, rx) = mpsc::channel(1);
-                state.connection.connection_result_rx = Some(rx);
-
-                tokio::spawn(async move {
-                    if get_connected_ssid().unwrap_or(None).is_some() {
-                        let _ = tokio::task::spawn_blocking(disconnect).await;
-                    }
-                    let result = tokio::task::spawn_blocking(move || {
-                        crate::wifi::connect_profile(&target_ssid)
-                    })
-                    .await;
-                    let result = match result {
-                        Ok(inner) => inner.map_err(|e| e.into()),
-                        Err(e) => Err(eyre!(e.to_string())),
-                    };
-                    let _ = tx.send(result).await;
-                });
-            }
         }
 
         if event::poll(Duration::from_millis(config::EVENT_POLL_MS))? {

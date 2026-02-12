@@ -67,7 +67,7 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
 
                         tokio::spawn(async move {
                             if get_connected_ssid().unwrap_or(None).is_some() {
-                                let _ = tokio::task::spawn_blocking(disconnect).await;
+                                let _ = tokio::task::spawn_blocking(crate::wifi::disconnect_and_wait).await;
                             }
                             let result = tokio::task::spawn_blocking(move || {
                                 if security == "Open" {
@@ -260,7 +260,7 @@ pub fn handle_password_popup(key: KeyEvent, state: &mut AppState) -> bool {
 
                 tokio::spawn(async move {
                     if get_connected_ssid().unwrap_or(None).is_some() {
-                        let _ = tokio::task::spawn_blocking(disconnect).await;
+                        let _ = tokio::task::spawn_blocking(crate::wifi::disconnect_and_wait).await;
                     }
                     let result = tokio::task::spawn_blocking(move || {
                         if let Some(info) = wifi_info {
@@ -395,7 +395,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
 
                             tokio::spawn(async move {
                                 if get_connected_ssid().unwrap_or(None).is_some() {
-                                    let _ = tokio::task::spawn_blocking(disconnect).await;
+                                    let _ = tokio::task::spawn_blocking(crate::wifi::disconnect_and_wait).await;
                                 }
                                 let result = tokio::task::spawn_blocking(move || {
                                     crate::wifi::connect_profile(&ssid)
@@ -422,7 +422,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
 
                         tokio::spawn(async move {
                             if get_connected_ssid().unwrap_or(None).is_some() {
-                                let _ = tokio::task::spawn_blocking(disconnect).await;
+                                let _ = tokio::task::spawn_blocking(crate::wifi::disconnect_and_wait).await;
                             }
                             let result = tokio::task::spawn_blocking(move || {
                                 crate::wifi::connect_open(&ssid, false)
