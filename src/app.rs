@@ -1,12 +1,12 @@
 use crate::{
     config::{self, IconSet},
     input::InputState,
-    wifi::{ConnectionEvent, WifiInfo, WifiListener, start_wifi_listener},
+    wifi::{ConnectionEvent, WifiInfo, WifiListener},
 };
 use color_eyre::eyre::Result;
 use ratatui::widgets::ListState;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc::{Receiver, UnboundedReceiver};
+use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender};
 
 /// Network-related state
 #[derive(Debug)]
@@ -74,13 +74,14 @@ pub struct ConnectionState {
     pub connection_result_rx: Option<Receiver<Result<()>>>,
     #[allow(dead_code)]
     pub wifi_listener: Option<WifiListener>,
+    pub listener_init_rx: Option<Receiver<crate::error::WifiResult<WifiListener>>>,
+    pub connection_event_tx: Option<UnboundedSender<ConnectionEvent>>,
     pub connection_event_rx: Option<UnboundedReceiver<ConnectionEvent>>,
 }
 
 impl ConnectionState {
     pub fn new() -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let wifi_listener = start_wifi_listener(tx).ok();
 
         Self {
             is_connecting: false,
@@ -88,7 +89,9 @@ impl ConnectionState {
             target_ssid: None,
             connection_start_time: None,
             connection_result_rx: None,
-            wifi_listener,
+            wifi_listener: None,
+            listener_init_rx: None,
+            connection_event_tx: Some(tx),
             connection_event_rx: Some(rx),
         }
     }

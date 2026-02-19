@@ -7,8 +7,9 @@ mod handlers;
 use crate::{
     app::AppState,
     config,
+    error::WifiError,
     ui::render,
-    wifi::{ConnectionEvent, get_connected_ssid, get_wifi_networks},
+    wifi::{ConnectionEvent, get_connected_ssid, get_wifi_networks, start_wifi_listener},
 };
 use color_eyre::eyre::{Result, eyre};
 use crossterm::{
@@ -41,8 +42,45 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
     // Set cursor style to blinking block while the app is active.
     crossterm::execute!(std::io::stdout(), SetCursorStyle::BlinkingBlock)?;
 
+    let mut listener_init_started = false;
+
     loop {
         terminal.draw(|frame| render(frame, state))?;
+
+        // Start WiFi event listener only after the first frame is rendered.
+        if !listener_init_started {
+            listener_init_started = true;
+            if let Some(connection_event_tx) = state.connection.connection_event_tx.take() {
+                let (init_tx, init_rx) = mpsc::channel(1);
+                state.connection.listener_init_rx = Some(init_rx);
+
+                tokio::spawn(async move {
+                    let result =
+                        tokio::task::spawn_blocking(move || start_wifi_listener(connection_event_tx))
+                            .await;
+                    let result = match result {
+                        Ok(inner) => inner,
+                        Err(e) => Err(WifiError::Internal(e.to_string())),
+                    };
+                    let _ = init_tx.send(result).await;
+                });
+            }
+        }
+
+        if let Some(rx) = &mut state.connection.listener_init_rx {
+            if let Ok(result) = rx.try_recv() {
+                state.connection.listener_init_rx = None;
+                match result {
+                    Ok(listener) => {
+                        state.connection.wifi_listener = Some(listener);
+                    }
+                    Err(e) => {
+                        state.ui.error_message =
+                            Some(format!("WiFi event listener unavailable: {}", e));
+                    }
+                }
+            }
+        }
 
         // Check for connection result
         if let Some(rx) = &mut state.connection.connection_result_rx {
