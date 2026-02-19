@@ -23,8 +23,22 @@ use ratatui::DefaultTerminal;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+struct CursorStyleGuard;
+
+impl Drop for CursorStyleGuard {
+    fn drop(&mut self) {
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            SetCursorStyle::DefaultUserShape
+        );
+    }
+}
+
 pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<()> {
-    // Set cursor style to blinking block
+    // Ensure the terminal cursor shape is restored on exit.
+    let _cursor_style_guard = CursorStyleGuard;
+
+    // Set cursor style to blinking block while the app is active.
     crossterm::execute!(std::io::stdout(), SetCursorStyle::BlinkingBlock)?;
 
     loop {
