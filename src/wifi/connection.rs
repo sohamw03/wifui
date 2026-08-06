@@ -117,25 +117,25 @@ pub fn disconnect() -> WifiResult<()> {
 /// Disconnect and wait for it to complete, with a delay after
 pub fn disconnect_and_wait() -> WifiResult<()> {
     disconnect()?;
-    
+
     // Wait for disconnect to complete by polling connection status
     let max_wait = std::time::Duration::from_secs(5);
     let start = std::time::Instant::now();
-    
+
     while start.elapsed() < max_wait {
         std::thread::sleep(std::time::Duration::from_millis(100));
         match get_connected_ssid() {
-            Ok(None) => break, // Successfully disconnected
+            Ok(None) => break,       // Successfully disconnected
             Ok(Some(_)) => continue, // Still connected, keep waiting
-            Err(_) => break, // Error checking, proceed anyway
+            Err(_) => break,         // Error checking, proceed anyway
         }
     }
-    
+
     // Add a small delay after disconnect to ensure clean state
     std::thread::sleep(std::time::Duration::from_millis(
         crate::config::DISCONNECT_DELAY_MS,
     ));
-    
+
     Ok(())
 }
 

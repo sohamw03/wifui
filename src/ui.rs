@@ -259,296 +259,323 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         .wrap(Wrap { trim: false });
 
         frame.render_widget(spinner_paragraph, combined_area);
+    } else if !crate::wifi::is_backend_available() {
+        let combined_area = Rect {
+            x: list_area.x,
+            y: list_area.y,
+            width: list_area.width,
+            height: list_area.height + details_area.height,
+        };
+
+        let unavailable = Paragraph::new(crate::wifi::backend_unavailable_message())
+            .block(
+                Block::default()
+                    .title(" Networks ")
+                    .title_style(
+                        Style::default()
+                            .fg(theme::BLUE)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(theme::BLUE))
+                    .padding(Padding::new(1, 1, 0, 0)),
+            )
+            .style(Style::default().fg(theme::YELLOW))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+
+        frame.render_widget(unavailable, combined_area);
     } else {
-    let list_items: Vec<ListItem> = state
-        .network
-        .filtered_wifi_list
-        .iter()
-        .map(|w| {
-            let mut ssid = w.ssid.clone();
-            let mut style = if is_dimmed {
-                Style::default().fg(theme::DIMMED)
-            } else {
-                Style::default()
-            };
-
-            let prefix = if w.is_saved {
-                if !is_dimmed {
-                    style = style.fg(theme::BLUE);
-                }
-                icons.saved()
-            } else if w.authentication == "Open" {
-                icons.open()
-            } else {
-                icons.locked()
-            };
-
-            ssid = format!("{}{}", prefix, ssid);
-
-            if let Some(connected_ssid) = &state.network.connected_ssid
-                && w.ssid == *connected_ssid
-            {
-                ssid = format!("{}{}", ssid, icons.connected());
-                if is_dimmed {
-                    style = style.fg(theme::DIMMED).add_modifier(Modifier::BOLD);
+        let list_items: Vec<ListItem> = state
+            .network
+            .filtered_wifi_list
+            .iter()
+            .map(|w| {
+                let mut ssid = w.ssid.clone();
+                let mut style = if is_dimmed {
+                    Style::default().fg(theme::DIMMED)
                 } else {
-                    style = style.fg(theme::GREEN).add_modifier(Modifier::BOLD);
-                }
-            }
+                    Style::default()
+                };
 
-            if w.is_saved {
-                if w.auto_connect {
-                    ssid = format!("{} {}", ssid, icons.auto_on());
+                let prefix = if w.is_saved {
+                    if !is_dimmed {
+                        style = style.fg(theme::BLUE);
+                    }
+                    icons.saved()
+                } else if w.authentication == "Open" {
+                    icons.open()
                 } else {
-                    ssid = format!("{} {}", ssid, icons.auto_off());
+                    icons.locked()
+                };
+
+                ssid = format!("{}{}", prefix, ssid);
+
+                if let Some(connected_ssid) = &state.network.connected_ssid
+                    && w.ssid == *connected_ssid
+                {
+                    ssid = format!("{}{}", ssid, icons.connected());
+                    if is_dimmed {
+                        style = style.fg(theme::DIMMED).add_modifier(Modifier::BOLD);
+                    } else {
+                        style = style.fg(theme::GREEN).add_modifier(Modifier::BOLD);
+                    }
                 }
-            }
 
-            ListItem::new(ssid).style(style)
-        })
-        .collect();
+                if w.is_saved {
+                    if w.auto_connect {
+                        ssid = format!("{} {}", ssid, icons.auto_on());
+                    } else {
+                        ssid = format!("{} {}", ssid, icons.auto_off());
+                    }
+                }
 
-    let list_border_style = if is_dimmed {
-        Style::default().fg(theme::DIMMED)
-    } else {
-        Style::default().fg(theme::BLUE)
-    };
+                ListItem::new(ssid).style(style)
+            })
+            .collect();
 
-    let list_title_style = if is_dimmed {
-        Style::default()
-            .fg(theme::DIMMED)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .fg(theme::BLUE)
-            .add_modifier(Modifier::BOLD)
-    };
-
-    let list = List::new(list_items)
-        .block(
-            Block::default()
-                .title(" Networks ")
-                .title_style(list_title_style)
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(list_border_style),
-        )
-        .highlight_symbol(icons.highlight())
-        .highlight_style(
-            Style::default()
-                .add_modifier(Modifier::BOLD)
-                .bg(if is_dimmed {
-                    theme::BACKGROUND
-                } else {
-                    theme::SELECTION_BG
-                }),
-        );
-
-    frame.render_stateful_widget(list, list_area, &mut state.ui.l_state);
-
-    let viewport_height = list_area.height.saturating_sub(2) as usize;
-    let content_len = state.network.filtered_wifi_list.len();
-
-    let mut scroll_state = ScrollbarState::new(content_len)
-        .position(state.ui.l_state.selected().unwrap_or(0))
-        .viewport_content_length(viewport_height);
-
-    if content_len > viewport_height {
-        let scrollbar_style = if is_dimmed {
+        let list_border_style = if is_dimmed {
             Style::default().fg(theme::DIMMED)
         } else {
             Style::default().fg(theme::BLUE)
         };
 
-        let scrollbar = Scrollbar::default()
-            .orientation(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some(""))
-            .end_symbol(Some(""))
-            .thumb_symbol("█")
-            .track_symbol(Some("│"))
-            .style(scrollbar_style);
-
-        frame.render_stateful_widget(
-            scrollbar,
-            list_area.inner(Margin {
-                vertical: 1,
-                horizontal: 0,
-            }),
-            &mut scroll_state,
-        );
-    }
-
-    if let Some(selected) = state.ui.l_state.selected()
-        && let Some(wifi) = state.network.filtered_wifi_list.get(selected)
-    {
-        let label_style = if is_dimmed {
-            Style::default().fg(theme::DIMMED)
-        } else {
-            Style::default().fg(theme::CYAN)
-        };
-
-        let value_style = if is_dimmed {
-            Style::default().fg(theme::DIMMED)
-        } else {
-            Style::default()
-        };
-
-        let label = |text: &str| Span::styled(format!("{:>11} ", text), label_style);
-
-        let sec_icon = if wifi.authentication == "Open" {
-            icons.open()
-        } else {
-            icons.locked()
-        };
-        let saved_icon = icons.saved();
-
-        let signal_bar_width = (wifi.signal as usize / 10).min(10);
-        let signal_color = if is_dimmed {
-            theme::DIMMED
-        } else if wifi.signal > 70 {
-            theme::GREEN
-        } else if wifi.signal > 40 {
-            theme::YELLOW
-        } else {
-            theme::RED
-        };
-        let signal_bar = "█".repeat(signal_bar_width) + &"░".repeat(10 - signal_bar_width);
-
-        let mut info = vec![
-            if wifi.is_connected {
-                Line::from(vec![
-                    label("Status"),
-                    Span::styled(
-                        format!("{} Connected ", icons.connected().trim()),
-                        if is_dimmed {
-                            Style::default().fg(theme::DIMMED)
-                        } else {
-                            Style::default()
-                                .fg(theme::GREEN)
-                                .add_modifier(Modifier::BOLD)
-                        },
-                    ),
-                    Span::styled(
-                        format!("{}Saved", saved_icon),
-                        if is_dimmed {
-                            Style::default().fg(theme::DIMMED)
-                        } else {
-                            Style::default().fg(theme::BLUE)
-                        },
-                    ),
-                ])
-            } else if wifi.is_saved {
-                Line::from(vec![
-                    label("Status"),
-                    Span::styled(
-                        format!("{}Saved", saved_icon),
-                        if is_dimmed {
-                            Style::default().fg(theme::DIMMED)
-                        } else {
-                            Style::default().fg(theme::BLUE)
-                        },
-                    ),
-                ])
-            } else {
-                Line::from(vec![
-                    label("Status"),
-                    Span::styled(
-                        "Available",
-                        if is_dimmed {
-                            Style::default().fg(theme::DIMMED)
-                        } else {
-                            value_style
-                        },
-                    ),
-                ])
-            },
-            Line::from(vec![
-                label("SSID"),
-                Span::styled(
-                    format!("{}", wifi.ssid),
-                    value_style.add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![
-                label("Signal"),
-                Span::styled(format!("{}% ", wifi.signal), value_style),
-                Span::styled(signal_bar, Style::default().fg(signal_color)),
-            ]),
-            Line::from(vec![
-                label("Security"),
-                Span::styled(
-                    format!(
-                        "{}{} / {}",
-                        sec_icon,
-                        display_auth_name(&wifi.authentication),
-                        wifi.encryption
-                    ),
-                    value_style,
-                ),
-            ]),
-            Line::from(vec![
-                label("Standard"),
-                Span::styled(format!("{}", wifi.phy_type), value_style),
-            ]),
-            Line::from(vec![
-                label("Channel"),
-                Span::styled(
-                    format!(
-                        "{} @ {:.3} GHz",
-                        wifi.channel,
-                        wifi.frequency as f32 / 1_000_000.0
-                    ),
-                    value_style,
-                ),
-            ]),
-        ];
-
-        if wifi.is_saved {
-            let auto_text = if wifi.auto_connect {
-                format!("{} Enabled", icons.auto_on())
-            } else {
-                format!("{} Disabled", icons.auto_off())
-            };
-            info.push(Line::from(vec![
-                label("Auto-Conn"),
-                Span::styled(auto_text, value_style),
-            ]));
-        }
-
-        if let Some(speed) = wifi.link_speed {
-            info.push(Line::from(vec![
-                label("Link Speed"),
-                Span::styled(format!("{} Mbps", speed), value_style),
-            ]));
-        }
-
-        let details_border_style = if is_dimmed {
-            Style::default().fg(theme::DIMMED)
-        } else {
-            Style::default().fg(theme::PURPLE)
-        };
-
-        let details_title_style = if is_dimmed {
+        let list_title_style = if is_dimmed {
             Style::default()
                 .fg(theme::DIMMED)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
-                .fg(theme::PURPLE)
+                .fg(theme::BLUE)
                 .add_modifier(Modifier::BOLD)
         };
 
-        let paragraph = Paragraph::new(info).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .title(" Details ")
-                .title_style(details_title_style)
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(details_border_style)
-                .padding(Padding::new(1, 1, 0, 0)),
-        );
-        frame.render_widget(paragraph, details_area);
-    }
+        let list = List::new(list_items)
+            .block(
+                Block::default()
+                    .title(" Networks ")
+                    .title_style(list_title_style)
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(list_border_style),
+            )
+            .highlight_symbol(icons.highlight())
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .bg(if is_dimmed {
+                        theme::BACKGROUND
+                    } else {
+                        theme::SELECTION_BG
+                    }),
+            );
+
+        frame.render_stateful_widget(list, list_area, &mut state.ui.l_state);
+
+        let viewport_height = list_area.height.saturating_sub(2) as usize;
+        let content_len = state.network.filtered_wifi_list.len();
+
+        let mut scroll_state = ScrollbarState::new(content_len)
+            .position(state.ui.l_state.selected().unwrap_or(0))
+            .viewport_content_length(viewport_height);
+
+        if content_len > viewport_height {
+            let scrollbar_style = if is_dimmed {
+                Style::default().fg(theme::DIMMED)
+            } else {
+                Style::default().fg(theme::BLUE)
+            };
+
+            let scrollbar = Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some(""))
+                .end_symbol(Some(""))
+                .thumb_symbol("█")
+                .track_symbol(Some("│"))
+                .style(scrollbar_style);
+
+            frame.render_stateful_widget(
+                scrollbar,
+                list_area.inner(Margin {
+                    vertical: 1,
+                    horizontal: 0,
+                }),
+                &mut scroll_state,
+            );
+        }
+
+        if let Some(selected) = state.ui.l_state.selected()
+            && let Some(wifi) = state.network.filtered_wifi_list.get(selected)
+        {
+            let label_style = if is_dimmed {
+                Style::default().fg(theme::DIMMED)
+            } else {
+                Style::default().fg(theme::CYAN)
+            };
+
+            let value_style = if is_dimmed {
+                Style::default().fg(theme::DIMMED)
+            } else {
+                Style::default()
+            };
+
+            let label = |text: &str| Span::styled(format!("{:>11} ", text), label_style);
+
+            let sec_icon = if wifi.authentication == "Open" {
+                icons.open()
+            } else {
+                icons.locked()
+            };
+            let saved_icon = icons.saved();
+
+            let signal_bar_width = (wifi.signal as usize / 10).min(10);
+            let signal_color = if is_dimmed {
+                theme::DIMMED
+            } else if wifi.signal > 70 {
+                theme::GREEN
+            } else if wifi.signal > 40 {
+                theme::YELLOW
+            } else {
+                theme::RED
+            };
+            let signal_bar = "█".repeat(signal_bar_width) + &"░".repeat(10 - signal_bar_width);
+
+            let mut info = vec![
+                if wifi.is_connected {
+                    Line::from(vec![
+                        label("Status"),
+                        Span::styled(
+                            format!("{} Connected ", icons.connected().trim()),
+                            if is_dimmed {
+                                Style::default().fg(theme::DIMMED)
+                            } else {
+                                Style::default()
+                                    .fg(theme::GREEN)
+                                    .add_modifier(Modifier::BOLD)
+                            },
+                        ),
+                        Span::styled(
+                            format!("{}Saved", saved_icon),
+                            if is_dimmed {
+                                Style::default().fg(theme::DIMMED)
+                            } else {
+                                Style::default().fg(theme::BLUE)
+                            },
+                        ),
+                    ])
+                } else if wifi.is_saved {
+                    Line::from(vec![
+                        label("Status"),
+                        Span::styled(
+                            format!("{}Saved", saved_icon),
+                            if is_dimmed {
+                                Style::default().fg(theme::DIMMED)
+                            } else {
+                                Style::default().fg(theme::BLUE)
+                            },
+                        ),
+                    ])
+                } else {
+                    Line::from(vec![
+                        label("Status"),
+                        Span::styled(
+                            "Available",
+                            if is_dimmed {
+                                Style::default().fg(theme::DIMMED)
+                            } else {
+                                value_style
+                            },
+                        ),
+                    ])
+                },
+                Line::from(vec![
+                    label("SSID"),
+                    Span::styled(
+                        format!("{}", wifi.ssid),
+                        value_style.add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(vec![
+                    label("Signal"),
+                    Span::styled(format!("{}% ", wifi.signal), value_style),
+                    Span::styled(signal_bar, Style::default().fg(signal_color)),
+                ]),
+                Line::from(vec![
+                    label("Security"),
+                    Span::styled(
+                        format!(
+                            "{}{} / {}",
+                            sec_icon,
+                            display_auth_name(&wifi.authentication),
+                            wifi.encryption
+                        ),
+                        value_style,
+                    ),
+                ]),
+                Line::from(vec![
+                    label("Standard"),
+                    Span::styled(format!("{}", wifi.phy_type), value_style),
+                ]),
+                Line::from(vec![
+                    label("Channel"),
+                    Span::styled(
+                        format!(
+                            "{} @ {:.3} GHz",
+                            wifi.channel,
+                            wifi.frequency as f32 / 1_000_000.0
+                        ),
+                        value_style,
+                    ),
+                ]),
+            ];
+
+            if wifi.is_saved {
+                let auto_text = if wifi.auto_connect {
+                    format!("{} Enabled", icons.auto_on())
+                } else {
+                    format!("{} Disabled", icons.auto_off())
+                };
+                info.push(Line::from(vec![
+                    label("Auto-Conn"),
+                    Span::styled(auto_text, value_style),
+                ]));
+            }
+
+            if let Some(speed) = wifi.link_speed {
+                info.push(Line::from(vec![
+                    label("Link Speed"),
+                    Span::styled(format!("{} Mbps", speed), value_style),
+                ]));
+            }
+
+            let details_border_style = if is_dimmed {
+                Style::default().fg(theme::DIMMED)
+            } else {
+                Style::default().fg(theme::PURPLE)
+            };
+
+            let details_title_style = if is_dimmed {
+                Style::default()
+                    .fg(theme::DIMMED)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(theme::PURPLE)
+                    .add_modifier(Modifier::BOLD)
+            };
+
+            let paragraph = Paragraph::new(info).wrap(Wrap { trim: false }).block(
+                Block::default()
+                    .title(" Details ")
+                    .title_style(details_title_style)
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(details_border_style)
+                    .padding(Padding::new(1, 1, 0, 0)),
+            );
+            frame.render_widget(paragraph, details_area);
+        }
     }
 
     let help_text = if state.ui.show_password_popup {

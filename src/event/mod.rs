@@ -9,7 +9,10 @@ use crate::{
     config,
     error::WifiError,
     ui::render,
-    wifi::{ConnectionEvent, get_connected_ssid, get_wifi_networks, start_wifi_listener},
+    wifi::{
+        ConnectionEvent, get_connected_ssid, get_wifi_networks, is_backend_available,
+        start_wifi_listener,
+    },
 };
 use color_eyre::eyre::{Result, eyre};
 use crossterm::{
@@ -28,10 +31,7 @@ struct CursorStyleGuard;
 
 impl Drop for CursorStyleGuard {
     fn drop(&mut self) {
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            SetCursorStyle::DefaultUserShape
-        );
+        let _ = crossterm::execute!(std::io::stdout(), SetCursorStyle::DefaultUserShape);
     }
 }
 
@@ -50,14 +50,17 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
         // Start WiFi event listener only after the first frame is rendered.
         if !listener_init_started {
             listener_init_started = true;
-            if let Some(connection_event_tx) = state.connection.connection_event_tx.take() {
+            if is_backend_available()
+                && let Some(connection_event_tx) = state.connection.connection_event_tx.take()
+            {
                 let (init_tx, init_rx) = mpsc::channel(1);
                 state.connection.listener_init_rx = Some(init_rx);
 
                 tokio::spawn(async move {
-                    let result =
-                        tokio::task::spawn_blocking(move || start_wifi_listener(connection_event_tx))
-                            .await;
+                    let result = tokio::task::spawn_blocking(move || {
+                        start_wifi_listener(connection_event_tx)
+                    })
+                    .await;
                     let result = match result {
                         Ok(inner) => inner,
                         Err(e) => Err(WifiError::Internal(e.to_string())),
@@ -95,60 +98,67 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                     // Connection initiated successfully, now wait for it to actually connect
                     state.refresh.refresh_burst = config::CONNECTION_REFRESH_BURST;
                 }
-                // Trigger background refresh instead of blocking
-                state.refresh.is_refreshing_networks = true;
-                let (tx, rx) = mpsc::channel(1);
-                state.refresh.network_update_rx = Some(rx);
-                tokio::spawn(async move {
-                    let result = tokio::task::spawn_blocking(|| {
-                        let networks = get_wifi_networks()?;
-                        let connected = get_connected_ssid()?;
-                        Ok((networks, connected))
-                    })
-                    .await;
-                    let result = match result {
-                        Ok(inner) => inner,
-                        Err(e) => Err(eyre!(e.to_string())),
-                    };
-                    let _ = tx.send(result).await;
-                });
+                // Trigger background refresh instead of blocking.
+                if is_backend_available() {
+                    state.refresh.is_refreshing_networks = true;
+                    let (tx, rx) = mpsc::channel(1);
+                    state.refresh.network_update_rx = Some(rx);
+                    tokio::spawn(async move {
+                        let result = tokio::task::spawn_blocking(|| {
+                            let networks = get_wifi_networks()?;
+                            let connected = get_connected_ssid()?;
+                            Ok((networks, connected))
+                        })
+                        .await;
+                        let result = match result {
+                            Ok(inner) => inner,
+                            Err(e) => Err(eyre!(e.to_string())),
+                        };
+                        let _ = tx.send(result).await;
+                    });
+                }
             }
         }
 
         // Check for network updates
         if let Some(rx) = &mut state.refresh.network_update_rx {
             if let Ok(result) = rx.try_recv() {
-                if let Ok((new_list, connected_ssid)) = result {
-                    let connection_changed = state.network.connected_ssid != connected_ssid;
+                match result {
+                    Ok((new_list, connected_ssid)) => {
+                        let connection_changed = state.network.connected_ssid != connected_ssid;
 
-                    // Try to preserve selection
-                    let selected_ssid = state
-                        .ui
-                        .l_state
-                        .selected()
-                        .and_then(|i| state.network.wifi_list.get(i))
-                        .map(|w| w.ssid.clone());
+                        // Try to preserve selection
+                        let selected_ssid = state
+                            .ui
+                            .l_state
+                            .selected()
+                            .and_then(|i| state.network.wifi_list.get(i))
+                            .map(|w| w.ssid.clone());
 
-                    state.network.wifi_list = new_list;
-                    state.network.connected_ssid = connected_ssid;
-                    state.update_filtered_list();
+                        state.network.wifi_list = new_list;
+                        state.network.connected_ssid = connected_ssid;
+                        state.update_filtered_list();
 
-                    if connection_changed && state.network.connected_ssid.is_some() {
-                        state.ui.l_state.select(Some(0));
-                    } else if let Some(ssid) = selected_ssid {
-                        if let Some(pos) = state
-                            .network
-                            .filtered_wifi_list
-                            .iter()
-                            .position(|w| w.ssid == ssid)
-                        {
-                            state.ui.l_state.select(Some(pos));
+                        if connection_changed && state.network.connected_ssid.is_some() {
+                            state.ui.l_state.select(Some(0));
+                        } else if let Some(ssid) = selected_ssid {
+                            if let Some(pos) = state
+                                .network
+                                .filtered_wifi_list
+                                .iter()
+                                .position(|w| w.ssid == ssid)
+                            {
+                                state.ui.l_state.select(Some(pos));
+                            } else {
+                                state.ui.l_state.select(Some(0));
+                            }
                         } else {
+                            // No previous selection, select first item
                             state.ui.l_state.select(Some(0));
                         }
-                    } else {
-                        // No previous selection, select first item
-                        state.ui.l_state.select(Some(0));
+                    }
+                    Err(e) => {
+                        state.ui.error_message = Some(format!("Failed to refresh networks: {e}"));
                     }
                 }
                 state.refresh.is_refreshing_networks = false;
@@ -232,7 +242,8 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
             Duration::from_secs(config::AUTO_REFRESH_INTERVAL_SECS)
         };
 
-        if !state.refresh.is_refreshing_networks
+        if is_backend_available()
+            && !state.refresh.is_refreshing_networks
             && !state.ui.show_manual_add_popup
             && !state.ui.show_password_popup
             && !state.ui.show_qr_popup
@@ -337,7 +348,6 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                 }
             }
         } else {
-
             if state.connection.is_connecting || state.refresh.is_initial_loading {
                 state.ui.loading_frame = (state.ui.loading_frame + 1) % 10;
             }

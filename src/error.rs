@@ -7,6 +7,9 @@ pub type WifiResult<T> = Result<T, WifiError>;
 /// Errors that can occur during WiFi operations
 #[derive(Error, Debug)]
 pub enum WifiError {
+    #[error("Wi-Fi backend is not implemented for this platform")]
+    UnsupportedPlatform,
+
     #[error("Failed to open WLAN handle (code: {code})")]
     HandleOpenFailed { code: u32 },
 

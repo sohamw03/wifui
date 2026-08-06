@@ -12,6 +12,8 @@
 
 **WifUI** is a blazing fast, lightweight Terminal User Interface (TUI) for managing Wi-Fi connections on **Windows**. Built with Rust and `ratatui`, it offers a keyboard-centric way to scan, connect, and monitor your network status without leaving the terminal.
 
+Linux compilation and TUI support are experimental. The Linux binary launches the interface, but Linux Wi-Fi scanning and management are not implemented yet.
+
 ## 🚀 Features
 
 - **Network Scanning**: Instantly discover available Wi-Fi networks.
