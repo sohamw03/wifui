@@ -6,8 +6,11 @@ pub const MAIN_WINDOW_WIDTH: u16 = 77;
 
 // Timing
 pub const CONNECTION_TIMEOUT_SECS: u64 = 60;
+#[cfg(windows)]
 pub const PROFILE_REGISTRATION_DELAY_MS: u64 = 1500;
+#[cfg(windows)]
 pub const OPEN_PROFILE_REGISTRATION_DELAY_MS: u64 = 1000;
+#[cfg(windows)]
 pub const DISCONNECT_DELAY_MS: u64 = 500;
 pub const SCAN_DELAY_MS: u64 = 2000;
 pub const AUTO_REFRESH_INTERVAL_SECS: u64 = 10;

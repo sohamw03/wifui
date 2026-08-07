@@ -7,6 +7,7 @@ pub type WifiResult<T> = Result<T, WifiError>;
 /// Errors that can occur during WiFi operations
 #[derive(Error, Debug)]
 pub enum WifiError {
+    #[cfg(all(not(windows), not(target_os = "linux")))]
     #[error("Wi-Fi backend is not implemented for this platform")]
     UnsupportedPlatform,
 
@@ -25,42 +26,55 @@ pub enum WifiError {
     #[error("Wi-Fi network was not found: {ssid}")]
     NetworkNotFound { ssid: String },
 
+    #[cfg(windows)]
     #[error("Failed to open WLAN handle (code: {code})")]
     HandleOpenFailed { code: u32 },
 
+    #[cfg(windows)]
     #[error("Failed to enumerate interfaces (code: {code})")]
     InterfaceEnumFailed { code: u32 },
 
+    #[cfg(windows)]
     #[error("No WiFi interface found")]
     NoInterface,
 
+    #[cfg(windows)]
     #[error("Failed to get available networks (code: {code})")]
     NetworkListFailed { code: u32 },
 
+    #[cfg(windows)]
     #[error("Failed to register notification (code: {code})")]
     NotificationRegistrationFailed { code: u32 },
 
+    #[cfg(windows)]
     #[error("Failed to scan networks (code: {code})")]
     ScanFailed { code: u32 },
 
+    #[cfg(windows)]
     #[error("Failed to connect (code: {code})")]
     ConnectionFailed { code: u32 },
 
+    #[cfg(windows)]
     #[error("Failed to add profile (code: {code}, reason: {reason})")]
     ProfileAddFailed { code: u32, reason: u32 },
 
+    #[cfg(windows)]
     #[error("Failed to get profile (code: {code})")]
     ProfileGetFailed { code: u32 },
 
+    #[cfg(windows)]
     #[error("Failed to set profile (code: {code}, reason: {reason})")]
     ProfileSetFailed { code: u32, reason: u32 },
 
+    #[cfg(windows)]
     #[error("Failed to delete profile (code: {code})")]
     ProfileDeleteFailed { code: u32 },
 
+    #[cfg(windows)]
     #[error("Failed to disconnect (code: {code})")]
     DisconnectFailed { code: u32 },
 
+    #[cfg(windows)]
     #[error("Could not find connectionMode in profile XML")]
     ProfileXmlInvalid,
 
@@ -68,7 +82,28 @@ pub enum WifiError {
     Internal(String),
 }
 
+impl WifiError {
+    pub fn dbus(operation: &str, error: &impl std::fmt::Display) -> Self {
+        let err_str = error.to_string();
+        let formatted = if err_str.contains("AccessDenied")
+            || err_str.contains("NotAuthorized")
+            || err_str.contains("InteractiveAuthorizationRequired")
+            || err_str.contains("PermissionDenied")
+        {
+            format!(
+                "{operation}: {err_str} (Polkit permission denied; verify your user network control privileges)"
+            )
+        } else {
+            format!("{operation}: {err_str}")
+        };
+        Self::Dbus {
+            operation: formatted,
+        }
+    }
+}
+
 /// Convert a WLAN reason code to a human-readable string
+#[cfg(windows)]
 pub fn wlan_reason_to_string(code: u32) -> String {
     match code {
         0 => "Success".to_string(),
@@ -101,5 +136,19 @@ pub fn wlan_reason_to_string(code: u32) -> String {
         0x00048014 => "Authentication Timeout (Possible Wrong Password)".to_string(),
         0x00080006 => "MSM Security Missing".to_string(),
         _ => format!("Unknown Error (Code: {code}, 0x{code:X})"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_polkit_permission_denied_errors() {
+        let err = WifiError::dbus(
+            "activate connection",
+            &"org.freedesktop.DBus.Error.AccessDenied: Rejected",
+        );
+        assert!(err.to_string().contains("Polkit permission denied"));
     }
 }

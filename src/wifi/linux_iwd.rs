@@ -15,6 +15,8 @@ use zbus::blocking::{Connection, Proxy};
 use zbus::names::OwnedInterfaceName;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 
+use super::linux_network_manager::{nm_frequency_to_channel, nm_frequency_to_hz};
+
 type ManagedObjects =
     HashMap<OwnedObjectPath, HashMap<OwnedInterfaceName, HashMap<String, OwnedValue>>>;
 
@@ -36,7 +38,10 @@ struct NetworkRecord {
 }
 
 impl IwdBackend {
-    pub(crate) fn discover(connection: &Connection) -> WifiResult<Self> {
+    pub(crate) fn discover(
+        connection: &Connection,
+        target_interface: Option<&str>,
+    ) -> WifiResult<Self> {
         let objects = managed_objects(connection)?;
         for (path, interfaces) in objects {
             let Some(device) = interface_properties(&interfaces, IWD_DEVICE_INTERFACE) else {
@@ -57,14 +62,21 @@ impl IwdBackend {
                 .get("Name")
                 .and_then(value_string)
                 .filter(|name| !name.is_empty());
-            if usable_interface.is_some() {
+            if let Some(usable) = usable_interface {
+                if let Some(target) = target_interface {
+                    if usable != target {
+                        continue;
+                    }
+                }
                 return Ok(Self {
                     station_path: path.to_string(),
                 });
             }
         }
         Err(WifiError::MissingInterface {
-            backend: "iwd".to_string(),
+            backend: target_interface
+                .map(|iface| format!("iwd ({iface})"))
+                .unwrap_or_else(|| "iwd".to_string()),
         })
     }
 
@@ -89,8 +101,8 @@ impl IwdBackend {
         let station = self.station(connection)?;
         let ordered: Vec<(OwnedObjectPath, i16)> = station
             .call("GetOrderedNetworks", &())
-            .map_err(|_| WifiError::Dbus {
-                operation: "enumerate iwd Wi-Fi networks".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("enumerate iwd Wi-Fi networks: {e}"),
             })?;
         let mut records = Vec::new();
         for (path, signal) in ordered {
@@ -178,8 +190,8 @@ impl IwdBackend {
         let result = self
             .network(connection, &network.path)?
             .call::<_, _, ()>("Connect", &())
-            .map_err(|_| WifiError::Dbus {
-                operation: "connect an iwd network".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("connect an iwd network: {e}"),
             });
         if let Some(state) = state {
             unregister_credential_agent(connection, state);
@@ -206,13 +218,39 @@ impl IwdBackend {
         let result = self
             .station(connection)?
             .call::<_, _, ()>("ConnectHiddenNetwork", &ssid)
-            .map_err(|_| WifiError::Dbus {
-                operation: "connect a hidden iwd network".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("connect a hidden iwd network: {e}"),
             });
         if let Some(state) = state {
             unregister_credential_agent(connection, state);
         }
         result
+    }
+
+    fn station_diagnostics(&self, connection: &Connection) -> Option<(u32, Option<u32>)> {
+        let proxy = new_proxy(
+            connection,
+            IWD_SERVICE,
+            &self.station_path,
+            "net.connman.iwd.StationDiagnostic",
+        )
+        .ok()?;
+        let diag: HashMap<String, OwnedValue> = proxy.call("GetDiagnostic", &()).ok()?;
+        let freq_mhz = diag.get("Frequency").and_then(|v| {
+            u32::try_from(v.clone())
+                .ok()
+                .or_else(|| u64::try_from(v.clone()).ok().map(|val| val as u32))
+        })?;
+        let link_speed = diag
+            .get("RxBitrate")
+            .or_else(|| diag.get("TxBitrate"))
+            .and_then(|v| {
+                u32::try_from(v.clone())
+                    .ok()
+                    .or_else(|| u64::try_from(v.clone()).ok().map(|val| val as u32))
+            })
+            .map(|rate_100kbps| rate_100kbps / 10);
+        Some((freq_mhz, link_speed))
     }
 }
 
@@ -283,8 +321,8 @@ impl WifiBackend for IwdBackend {
         let connection = system_connection()?;
         self.station(&connection)?
             .call::<_, _, ()>("Disconnect", &())
-            .map_err(|_| WifiError::Dbus {
-                operation: "disconnect iwd Wi-Fi".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("disconnect iwd Wi-Fi: {e}"),
             })
     }
 
@@ -314,18 +352,27 @@ impl WifiBackend for IwdBackend {
         network
             .get_property("Name")
             .map(Some)
-            .map_err(|_| WifiError::Dbus {
-                operation: "read the iwd connected SSID".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("read the iwd connected SSID: {e}"),
             })
     }
 
     fn get_wifi_networks(&self) -> WifiResult<Vec<WifiInfo>> {
         let connection = system_connection()?;
         let records = self.ordered_networks(&connection)?;
+        let diagnostics = self.station_diagnostics(&connection);
         let mut networks = HashMap::<String, WifiInfo>::new();
         for record in records {
             let (authentication, encryption) = iwd_security_names(&record.network_type);
-            let (phy_type, channel, frequency) = iwd_unknown_metadata();
+            let (phy_type, mut channel, mut frequency) = iwd_unknown_metadata();
+            let mut link_speed = None;
+            if record.is_connected {
+                if let Some((freq_mhz, speed)) = diagnostics {
+                    frequency = nm_frequency_to_hz(freq_mhz);
+                    channel = nm_frequency_to_channel(freq_mhz);
+                    link_speed = speed;
+                }
+            }
             let info = WifiInfo {
                 ssid: record.ssid.clone(),
                 authentication: authentication.to_string(),
@@ -337,17 +384,24 @@ impl WifiBackend for IwdBackend {
                 phy_type: phy_type.to_string(),
                 channel,
                 frequency,
-                link_speed: None,
+                link_speed,
             };
             networks
                 .entry(record.ssid)
                 .and_modify(|current| {
                     if info.signal > current.signal {
                         current.signal = info.signal;
+                        if current.channel == 0 {
+                            current.channel = info.channel;
+                            current.frequency = info.frequency;
+                        }
                     }
                     current.is_saved |= info.is_saved;
                     current.is_connected |= info.is_connected;
                     current.auto_connect |= info.auto_connect;
+                    if info.link_speed.is_some() {
+                        current.link_speed = info.link_speed;
+                    }
                 })
                 .or_insert(info);
         }
@@ -367,8 +421,8 @@ impl WifiBackend for IwdBackend {
         let connection = system_connection()?;
         self.station(&connection)?
             .call::<_, _, ()>("Scan", &())
-            .map_err(|_| WifiError::Dbus {
-                operation: "request an iwd Wi-Fi scan".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("request an iwd Wi-Fi scan: {e}"),
             })
     }
 
@@ -401,8 +455,8 @@ impl WifiBackend for IwdBackend {
         let known = self.known_network(&connection, &known_path)?;
         known
             .set_property("AutoConnect", enable)
-            .map_err(|_| WifiError::Dbus {
-                operation: "update iwd auto-connect setting".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("update iwd auto-connect setting: {e}"),
             })
     }
 
@@ -416,8 +470,8 @@ impl WifiBackend for IwdBackend {
             })?;
         self.known_network(&connection, &known_path)?
             .call::<_, _, ()>("Forget", &())
-            .map_err(|_| WifiError::Dbus {
-                operation: "forget an iwd saved profile".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("forget an iwd saved profile: {e}"),
             })
     }
 
@@ -438,8 +492,8 @@ fn managed_objects(connection: &Connection) -> WifiResult<ManagedObjects> {
     )?;
     manager
         .call("GetManagedObjects", &())
-        .map_err(|_| WifiError::Dbus {
-            operation: "enumerate iwd D-Bus objects".to_string(),
+        .map_err(|e| WifiError::Dbus {
+            operation: format!("enumerate iwd D-Bus objects: {e}"),
         })
 }
 
@@ -613,8 +667,8 @@ fn register_credential_agent(
     connection
         .object_server()
         .at(IWD_AGENT_PATH, CredentialAgent::new(state))
-        .map_err(|_| WifiError::Dbus {
-            operation: "register the temporary iwd credential agent".to_string(),
+        .map_err(|e| WifiError::Dbus {
+            operation: format!("register the temporary iwd credential agent: {e}"),
         })?;
     let manager = new_proxy(
         connection,
@@ -625,8 +679,8 @@ fn register_credential_agent(
     let path = owned_object_path(IWD_AGENT_PATH)?;
     manager
         .call::<_, _, ()>("RegisterAgent", &path)
-        .map_err(|_| WifiError::Dbus {
-            operation: "register the temporary iwd credential agent".to_string(),
+        .map_err(|e| WifiError::Dbus {
+            operation: format!("register the temporary iwd credential agent: {e}"),
         })
 }
 

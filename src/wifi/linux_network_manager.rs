@@ -46,7 +46,10 @@ struct SavedProfile {
 type SettingsMap = HashMap<String, HashMap<String, OwnedValue>>;
 
 impl NetworkManagerBackend {
-    pub(crate) fn discover(connection: &Connection) -> WifiResult<Self> {
+    pub(crate) fn discover(
+        connection: &Connection,
+        target_interface: Option<&str>,
+    ) -> WifiResult<Self> {
         let manager = new_proxy(
             connection,
             NETWORK_MANAGER_SERVICE,
@@ -56,8 +59,8 @@ impl NetworkManagerBackend {
         let devices: Vec<OwnedObjectPath> =
             manager
                 .call("GetDevices", &())
-                .map_err(|_| WifiError::Dbus {
-                    operation: "enumerate NetworkManager devices".to_string(),
+                .map_err(|e| WifiError::Dbus {
+                    operation: format!("enumerate NetworkManager devices: {e}"),
                 })?;
 
         for device_path in devices {
@@ -78,6 +81,11 @@ impl NetworkManagerBackend {
                 _ => continue,
             };
             if device_type == DEVICE_TYPE_WIFI && managed {
+                if let Some(target) = target_interface {
+                    if interface != target {
+                        continue;
+                    }
+                }
                 return Ok(Self {
                     device_path,
                     interface,
@@ -86,7 +94,9 @@ impl NetworkManagerBackend {
         }
 
         Err(WifiError::MissingInterface {
-            backend: "NetworkManager".to_string(),
+            backend: target_interface
+                .map(|iface| format!("NetworkManager ({iface})"))
+                .unwrap_or_else(|| "NetworkManager".to_string()),
         })
     }
 
@@ -127,8 +137,8 @@ impl NetworkManagerBackend {
         let paths: Vec<OwnedObjectPath> =
             settings
                 .call("ListConnections", &())
-                .map_err(|_| WifiError::Dbus {
-                    operation: "enumerate NetworkManager profiles".to_string(),
+                .map_err(|e| WifiError::Dbus {
+                    operation: format!("enumerate NetworkManager profiles: {e}"),
                 })?;
         let mut profiles = Vec::new();
 
@@ -247,8 +257,8 @@ impl NetworkManagerBackend {
         let specific = owned_object_path(specific_object)?;
         let _: (OwnedObjectPath, OwnedObjectPath) = manager
             .call("AddAndActivateConnection", &(settings, device, specific))
-            .map_err(|_| WifiError::Dbus {
-                operation: "activate a NetworkManager connection".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("activate a NetworkManager connection: {e}"),
             })?;
         Ok(())
     }
@@ -283,8 +293,8 @@ impl WifiBackend for NetworkManagerBackend {
         let specific = owned_object_path("/")?;
         let _: OwnedObjectPath = manager
             .call("ActivateConnection", &(profile_path, device_path, specific))
-            .map_err(|_| WifiError::Dbus {
-                operation: "activate a saved NetworkManager profile".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("activate a saved NetworkManager profile: {e}"),
             })?;
         Ok(())
     }
@@ -313,8 +323,8 @@ impl WifiBackend for NetworkManagerBackend {
         let connection = system_connection()?;
         self.device(&connection)?
             .call::<_, _, ()>("Disconnect", &())
-            .map_err(|_| WifiError::Dbus {
-                operation: "disconnect NetworkManager Wi-Fi".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("disconnect NetworkManager Wi-Fi: {e}"),
             })
     }
 
@@ -333,8 +343,8 @@ impl WifiBackend for NetworkManagerBackend {
     fn get_connected_ssid(&self) -> WifiResult<Option<String>> {
         let connection = system_connection()?;
         let device = self.device(&connection)?;
-        let state: u32 = device.get_property("State").map_err(|_| WifiError::Dbus {
-            operation: "read NetworkManager connection state".to_string(),
+        let state: u32 = device.get_property("State").map_err(|e| WifiError::Dbus {
+            operation: format!("read NetworkManager connection state: {e}"),
         })?;
         if state != DEVICE_STATE_ACTIVATED {
             return Ok(None);
@@ -353,8 +363,8 @@ impl WifiBackend for NetworkManagerBackend {
             active_ap.as_str(),
             NM_ACCESS_POINT_INTERFACE,
         )?;
-        let ssid: Vec<u8> = ap.get_property("Ssid").map_err(|_| WifiError::Dbus {
-            operation: "read the NetworkManager connected SSID".to_string(),
+        let ssid: Vec<u8> = ap.get_property("Ssid").map_err(|e| WifiError::Dbus {
+            operation: format!("read the NetworkManager connected SSID: {e}"),
         })?;
         Ok(Some(String::from_utf8_lossy(&ssid).into_owned()))
     }
@@ -364,7 +374,7 @@ impl WifiBackend for NetworkManagerBackend {
         let saved = self.saved_profiles(&connection)?;
         let connected = self.get_connected_ssid()?;
         let link_speed = self
-            .device(&connection)?
+            .wireless(&connection)?
             .get_property::<u32>("Bitrate")
             .ok()
             .map(|rate| rate / 1000);
@@ -372,8 +382,8 @@ impl WifiBackend for NetworkManagerBackend {
         let access_points: Vec<OwnedObjectPath> = wireless
             .call("GetAllAccessPoints", &())
             .or_else(|_| wireless.call("GetAccessPoints", &()))
-            .map_err(|_| WifiError::Dbus {
-                operation: "enumerate NetworkManager access points".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("enumerate NetworkManager access points: {e}"),
             })?;
 
         let mut networks = HashMap::<String, WifiInfo>::new();
@@ -411,7 +421,7 @@ impl WifiBackend for NetworkManagerBackend {
                 is_saved: profile.is_some(),
                 is_connected,
                 auto_connect: profile.map(|profile| profile.auto_connect).unwrap_or(false),
-                phy_type: "Unknown".to_string(),
+                phy_type: nm_frequency_to_phy_type(frequency_mhz, wpa_flags, rsn_flags).to_string(),
                 channel: nm_frequency_to_channel(frequency_mhz),
                 frequency: nm_frequency_to_hz(frequency_mhz),
                 link_speed: if is_connected { link_speed } else { None },
@@ -452,8 +462,8 @@ impl WifiBackend for NetworkManagerBackend {
         let options: HashMap<String, OwnedValue> = HashMap::new();
         wireless
             .call::<_, _, ()>("RequestScan", &options)
-            .map_err(|_| WifiError::Dbus {
-                operation: "request a NetworkManager Wi-Fi scan".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("request a NetworkManager Wi-Fi scan: {e}"),
             })
     }
 
@@ -477,14 +487,14 @@ impl WifiBackend for NetworkManagerBackend {
         let mut settings: SettingsMap =
             profile_proxy
                 .call("GetSettings", &())
-                .map_err(|_| WifiError::Dbus {
-                    operation: "read a NetworkManager saved profile".to_string(),
+                .map_err(|e| WifiError::Dbus {
+                    operation: format!("read a NetworkManager saved profile: {e}"),
                 })?;
         set_profile_auto_connect(&mut settings, enable);
         profile_proxy
             .call::<_, _, ()>("Update", &settings)
-            .map_err(|_| WifiError::Dbus {
-                operation: "update NetworkManager auto-connect setting".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("update NetworkManager auto-connect setting: {e}"),
             })
     }
 
@@ -499,8 +509,8 @@ impl WifiBackend for NetworkManagerBackend {
         )?;
         profile_proxy
             .call::<_, _, ()>("Delete", &())
-            .map_err(|_| WifiError::Dbus {
-                operation: "forget a NetworkManager saved profile".to_string(),
+            .map_err(|e| WifiError::Dbus {
+                operation: format!("forget a NetworkManager saved profile: {e}"),
             })
     }
 
@@ -516,8 +526,8 @@ impl WifiBackend for NetworkManagerBackend {
         let settings: SettingsMap =
             profile_proxy
                 .call("GetSettings", &())
-                .map_err(|_| WifiError::Dbus {
-                    operation: "read a NetworkManager saved profile".to_string(),
+                .map_err(|e| WifiError::Dbus {
+                    operation: format!("read a NetworkManager saved profile: {e}"),
                 })?;
 
         let setting_name = if settings.contains_key("802-11-wireless-security") {
@@ -531,8 +541,8 @@ impl WifiBackend for NetworkManagerBackend {
         let secrets: SettingsMap =
             profile_proxy
                 .call("GetSecrets", &setting_name)
-                .map_err(|_| WifiError::Dbus {
-                    operation: "read the NetworkManager saved password".to_string(),
+                .map_err(|e| WifiError::Dbus {
+                    operation: format!("read the NetworkManager saved password: {e}"),
                 })?;
         Ok(extract_profile_secret(&secrets, setting_name))
     }
@@ -582,6 +592,56 @@ fn extract_profile_secret(settings: &SettingsMap, setting_name: &str) -> Option<
 
 /// Convert the NetworkManager AP frequency, which is in MHz, to the Hz unit
 /// used by WifUI's shared `WifiInfo` model.
+/// Derive a best-effort IEEE 802.11 standard label from frequency and capability flags.
+///
+/// NetworkManager does not expose a PhyType property on AccessPoint objects, so we
+/// infer the floor standard from the band combined with advertised security generation:
+///
+/// - 6 GHz band → 802.11ax (Wi-Fi 6E) or newer
+/// - 5 GHz + SAE/OWE (WPA3 flags) → 802.11ax (Wi-Fi 6)
+/// - 5 GHz + RSN-PSK (WPA2 flags) → 802.11ac (Wi-Fi 5)
+/// - 5 GHz only (WPA1/Open) → 802.11a
+/// - 2.4 GHz + SAE/OWE → 802.11ax (Wi-Fi 6)
+/// - 2.4 GHz + RSN-PSK → 802.11n (Wi-Fi 4)
+/// - 2.4 GHz + WPA1 → 802.11g
+/// - 2.4 GHz open/WEP → 802.11b/g
+pub(crate) fn nm_frequency_to_phy_type(
+    frequency_mhz: u32,
+    wpa_flags: u32,
+    rsn_flags: u32,
+) -> &'static str {
+    let has_wpa3 = (rsn_flags & (SEC_KEY_MGMT_SAE | SEC_KEY_MGMT_OWE)) != 0;
+    let has_wpa2 = (rsn_flags & (SEC_KEY_MGMT_PSK | SEC_KEY_MGMT_8021X)) != 0;
+    let has_wpa1 = (wpa_flags & (SEC_KEY_MGMT_PSK | SEC_KEY_MGMT_8021X)) != 0;
+    match frequency_mhz {
+        // 6 GHz band – Wi-Fi 6E (802.11ax) or Wi-Fi 7 (802.11be) only
+        5950..=7125 => "802.11ax (Wi-Fi 6E)",
+        // 5 GHz band
+        5000..=5885 => {
+            if has_wpa3 {
+                "802.11ax (Wi-Fi 6)"
+            } else if has_wpa2 {
+                "802.11ac (Wi-Fi 5)"
+            } else {
+                "802.11a"
+            }
+        }
+        // 2.4 GHz band
+        2400..=2500 => {
+            if has_wpa3 {
+                "802.11ax (Wi-Fi 6)"
+            } else if has_wpa2 {
+                "802.11n (Wi-Fi 4)"
+            } else if has_wpa1 {
+                "802.11g"
+            } else {
+                "802.11b/g"
+            }
+        }
+        _ => "Unknown",
+    }
+}
+
 pub(crate) fn nm_frequency_to_hz(frequency_mhz: u32) -> u64 {
     u64::from(frequency_mhz) * 1_000_000
 }
@@ -666,6 +726,41 @@ mod tests {
         assert_eq!(nm_frequency_to_channel(5180), 36);
         assert_eq!(nm_frequency_to_channel(5955), 1);
         assert_eq!(nm_frequency_to_channel(1234), 0);
+    }
+
+    #[test]
+    fn derives_phy_type_from_frequency_and_security() {
+        // 6 GHz → Wi-Fi 6E regardless of security
+        assert_eq!(nm_frequency_to_phy_type(5955, 0, 0), "802.11ax (Wi-Fi 6E)");
+        // 5 GHz + WPA3 → Wi-Fi 6
+        assert_eq!(
+            nm_frequency_to_phy_type(5180, 0, SEC_KEY_MGMT_SAE | SEC_PAIR_CCMP),
+            "802.11ax (Wi-Fi 6)"
+        );
+        // 5 GHz + WPA2 → Wi-Fi 5
+        assert_eq!(
+            nm_frequency_to_phy_type(5180, 0, SEC_KEY_MGMT_PSK | SEC_PAIR_CCMP),
+            "802.11ac (Wi-Fi 5)"
+        );
+        // 5 GHz open → 802.11a
+        assert_eq!(nm_frequency_to_phy_type(5180, 0, 0), "802.11a");
+        // 2.4 GHz + WPA3 → Wi-Fi 6
+        assert_eq!(
+            nm_frequency_to_phy_type(2412, 0, SEC_KEY_MGMT_SAE | SEC_PAIR_CCMP),
+            "802.11ax (Wi-Fi 6)"
+        );
+        // 2.4 GHz + WPA2 → Wi-Fi 4
+        assert_eq!(
+            nm_frequency_to_phy_type(2412, 0, SEC_KEY_MGMT_PSK | SEC_PAIR_CCMP),
+            "802.11n (Wi-Fi 4)"
+        );
+        // 2.4 GHz + WPA1 → 802.11g
+        assert_eq!(
+            nm_frequency_to_phy_type(2412, SEC_KEY_MGMT_PSK | SEC_PAIR_TKIP, 0),
+            "802.11g"
+        );
+        // 2.4 GHz open → 802.11b/g
+        assert_eq!(nm_frequency_to_phy_type(2412, 0, 0), "802.11b/g");
     }
 
     #[test]

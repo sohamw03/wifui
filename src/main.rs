@@ -50,6 +50,10 @@ struct Args {
     #[cfg(target_os = "linux")]
     #[arg(long, value_enum, default_value_t = BackendChoice::Auto)]
     backend: BackendChoice,
+
+    /// Target a specific Wi-Fi interface (e.g. wlan0, wlan1)
+    #[arg(short = 'i', long = "interface")]
+    interface: Option<String>,
 }
 
 #[tokio::main]
@@ -59,10 +63,14 @@ async fn main() -> Result<()> {
     let mut state = AppState::new(Vec::new(), args.show_keys, args.ascii);
 
     #[cfg(target_os = "linux")]
-    let backend_init_error = tokio::task::spawn_blocking(move || initialize_backend(args.backend))
-        .await
-        .map(|result| result.err())
-        .unwrap_or_else(|error| Some(crate::error::WifiError::Internal(error.to_string())));
+    let target_iface = args.interface.clone();
+    #[cfg(target_os = "linux")]
+    let backend_init_error = tokio::task::spawn_blocking(move || {
+        initialize_backend(args.backend, target_iface.as_deref())
+    })
+    .await
+    .map(|result| result.err())
+    .unwrap_or_else(|error| Some(crate::error::WifiError::Internal(error.to_string())));
     #[cfg(not(target_os = "linux"))]
     let backend_init_error: Option<crate::error::WifiError> = None;
 

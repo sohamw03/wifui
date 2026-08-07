@@ -93,10 +93,11 @@ fn worker_main(
     runtime.block_on(async move {
         let connection = match Connection::system().await {
             Ok(connection) => connection,
-            Err(_) => {
+            Err(e) => {
                 let _ = ready_tx.send(Err(WifiError::Dbus {
-                    operation: "connect the Linux Wi-Fi event listener to the system bus"
-                        .to_string(),
+                    operation: format!(
+                        "connect the Linux Wi-Fi event listener to the system bus: {e}"
+                    ),
                 }));
                 return;
             }
@@ -128,18 +129,18 @@ async fn run_network_manager(
     .await
     {
         Ok(proxy) => proxy,
-        Err(_) => {
+        Err(e) => {
             let _ = ready_tx.send(Err(WifiError::Dbus {
-                operation: "subscribe to NetworkManager state changes".to_string(),
+                operation: format!("subscribe to NetworkManager state changes: {e}"),
             }));
             return;
         }
     };
     let mut signals = match device.receive_signal("StateChanged").await {
         Ok(signals) => signals,
-        Err(_) => {
+        Err(e) => {
             let _ = ready_tx.send(Err(WifiError::Dbus {
-                operation: "subscribe to NetworkManager state changes".to_string(),
+                operation: format!("subscribe to NetworkManager state changes: {e}"),
             }));
             return;
         }
@@ -182,18 +183,18 @@ async fn run_iwd(
     .await
     {
         Ok(proxy) => proxy,
-        Err(_) => {
+        Err(e) => {
             let _ = ready_tx.send(Err(WifiError::Dbus {
-                operation: "subscribe to iwd state changes".to_string(),
+                operation: format!("subscribe to iwd state changes: {e}"),
             }));
             return;
         }
     };
     let mut signals = match station.receive_signal("PropertiesChanged").await {
         Ok(signals) => signals,
-        Err(_) => {
+        Err(e) => {
             let _ = ready_tx.send(Err(WifiError::Dbus {
-                operation: "subscribe to iwd state changes".to_string(),
+                operation: format!("subscribe to iwd state changes: {e}"),
             }));
             return;
         }

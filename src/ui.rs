@@ -291,22 +291,54 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
         frame.render_widget(unavailable, combined_area);
     } else {
+        let spinner_char =
+            config::LOADING_CHARS[state.ui.loading_frame % config::LOADING_CHARS.len()];
+        let connecting_ssid = if state.connection.is_connecting {
+            state.connection.target_ssid.as_deref()
+        } else {
+            None
+        };
+
         let list_items: Vec<ListItem> = state
             .network
             .filtered_wifi_list
             .iter()
             .map(|w| {
-                let mut ssid = w.ssid.clone();
-                let mut style = if is_dimmed {
-                    Style::default().fg(theme::DIMMED)
+                let is_this_connecting = connecting_ssid.is_some_and(|s| s == w.ssid.as_str());
+                let is_connected = state
+                    .network
+                    .connected_ssid
+                    .as_deref()
+                    .is_some_and(|ssid| ssid == w.ssid);
+
+                // Preserve the original row-wide coloring: saved rows are blue,
+                // connected rows are green and bold, and a connecting row is yellow.
+                let row_style = if is_dimmed {
+                    if is_connected {
+                        Style::default()
+                            .fg(theme::DIMMED)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme::DIMMED)
+                    }
+                } else if is_this_connecting {
+                    Style::default()
+                        .fg(theme::YELLOW)
+                        .add_modifier(Modifier::BOLD)
+                } else if is_connected {
+                    Style::default()
+                        .fg(theme::GREEN)
+                        .add_modifier(Modifier::BOLD)
+                } else if w.is_saved {
+                    Style::default().fg(theme::BLUE)
                 } else {
                     Style::default()
                 };
 
-                let prefix = if w.is_saved {
-                    if !is_dimmed {
-                        style = style.fg(theme::BLUE);
-                    }
+                // Prefix: spinner while connecting, otherwise the usual icon
+                let prefix_text = if is_this_connecting {
+                    spinner_char
+                } else if w.is_saved {
                     icons.saved()
                 } else if w.authentication == "Open" {
                     icons.open()
@@ -314,28 +346,36 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                     icons.locked()
                 };
 
-                ssid = format!("{}{}", prefix, ssid);
-
-                if let Some(connected_ssid) = &state.network.connected_ssid
-                    && w.ssid == *connected_ssid
-                {
-                    ssid = format!("{}{}", ssid, icons.connected());
-                    if is_dimmed {
-                        style = style.fg(theme::DIMMED).add_modifier(Modifier::BOLD);
+                let mut spans = vec![
+                    Span::styled(prefix_text, row_style),
+                    // Spinner char has no trailing space; icons do — add one to keep width stable
+                    if is_this_connecting {
+                        Span::raw(" ")
                     } else {
-                        style = style.fg(theme::GREEN).add_modifier(Modifier::BOLD);
-                    }
+                        Span::raw("")
+                    },
+                ];
+
+                // SSID text
+                spans.push(Span::styled(w.ssid.clone(), row_style));
+
+                // Connected indicator
+                if is_connected {
+                    spans.push(Span::styled(icons.connected(), row_style));
                 }
 
-                if w.is_saved {
+                // Suffix: "connecting..." while connecting, otherwise the auto-connect bell
+                if is_this_connecting {
+                    spans.push(Span::styled(" connecting...", row_style));
+                } else if w.is_saved {
                     if w.auto_connect {
-                        ssid = format!("{} {}", ssid, icons.auto_on());
+                        spans.push(Span::styled(format!(" {}", icons.auto_on()), row_style));
                     } else {
-                        ssid = format!("{} {}", ssid, icons.auto_off());
+                        spans.push(Span::styled(format!(" {}", icons.auto_off()), row_style));
                     }
                 }
 
-                ListItem::new(ssid).style(style)
+                ListItem::new(Line::from(spans))
             })
             .collect();
 
@@ -355,10 +395,29 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 .add_modifier(Modifier::BOLD)
         };
 
+        let networks_title = if state.refresh.is_refreshing_networks {
+            let spinner_char =
+                config::LOADING_CHARS[state.ui.loading_frame % config::LOADING_CHARS.len()];
+            Line::from(vec![
+                Span::styled(" Networks ", list_title_style),
+                Span::styled(
+                    spinner_char,
+                    if is_dimmed {
+                        Style::default().fg(theme::DIMMED)
+                    } else {
+                        Style::default().fg(theme::CYAN)
+                    },
+                ),
+                Span::raw(" "),
+            ])
+        } else {
+            Line::from(Span::styled(" Networks ", list_title_style))
+        };
+
         let list = List::new(list_items)
             .block(
                 Block::default()
-                    .title(" Networks ")
+                    .title(networks_title)
                     .title_style(list_title_style)
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
@@ -654,27 +713,6 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         .alignment(Alignment::Center);
 
     frame.render_widget(help_paragraph, help_area);
-
-    if state.connection.is_connecting {
-        let loading_char =
-            config::LOADING_CHARS[state.ui.loading_frame % config::LOADING_CHARS.len()];
-
-        let area = frame.area();
-        let loading_area = Rect::new(area.width / 2 - 10, area.height / 2 - 1, 20, 3);
-
-        let loading_paragraph = Paragraph::new(format!("{} Connecting...", loading_char))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(theme::YELLOW)),
-            )
-            .style(Style::default().fg(theme::FOREGROUND).bg(theme::BACKGROUND))
-            .alignment(Alignment::Center);
-
-        frame.render_widget(Clear, loading_area);
-        frame.render_widget(loading_paragraph, loading_area);
-    }
 
     if let Some(error) = &state.ui.error_message {
         let error_area = Rect::new(area.x + 2, area.height - 4, area.width - 4, 3);

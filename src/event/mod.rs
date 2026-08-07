@@ -369,7 +369,10 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                 }
             }
         } else {
-            if state.connection.is_connecting || state.refresh.is_initial_loading {
+            if state.connection.is_connecting
+                || state.refresh.is_initial_loading
+                || state.refresh.is_refreshing_networks
+            {
                 state.ui.loading_frame = (state.ui.loading_frame + 1) % 10;
             }
         }

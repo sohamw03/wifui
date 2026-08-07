@@ -20,9 +20,9 @@ pub struct WifiInfo {
 pub enum ConnectionEvent {
     Connected(String),
     Disconnected,
+    #[allow(dead_code)]
     Failed {
         ssid: String,
-        #[allow(dead_code)]
         reason_code: u32,
         reason_str: String,
     },

@@ -125,9 +125,7 @@ fn registry() -> &'static RwLock<BackendRegistry> {
 }
 
 pub(crate) fn system_connection() -> WifiResult<Connection> {
-    Connection::system().map_err(|_| WifiError::Dbus {
-        operation: "connect to the system bus".to_string(),
-    })
+    Connection::system().map_err(|e| WifiError::dbus("connect to the system bus", &e))
 }
 
 pub(crate) fn new_proxy(
@@ -142,15 +140,12 @@ pub(crate) fn new_proxy(
         path.to_string(),
         interface.to_string(),
     )
-    .map_err(|_| WifiError::Dbus {
-        operation: format!("create {interface} proxy"),
-    })
+    .map_err(|e| WifiError::dbus(&format!("create {interface} proxy"), &e))
 }
 
 pub(crate) fn owned_object_path(path: &str) -> WifiResult<zvariant::OwnedObjectPath> {
-    zvariant::OwnedObjectPath::try_from(path.to_string()).map_err(|_| WifiError::Dbus {
-        operation: "build D-Bus object path".to_string(),
-    })
+    zvariant::OwnedObjectPath::try_from(path.to_string())
+        .map_err(|e| WifiError::dbus(&format!("build D-Bus object path ({path})"), &e))
 }
 
 pub(crate) fn owned_value<T>(value: T) -> OwnedValue
@@ -183,9 +178,7 @@ fn service_has_owner(connection: &Connection, service: &str) -> WifiResult<bool>
     )?;
     proxy
         .call("NameHasOwner", &service)
-        .map_err(|_| WifiError::Dbus {
-            operation: format!("check whether {service} is running"),
-        })
+        .map_err(|e| WifiError::dbus(&format!("check whether {service} is running"), &e))
 }
 
 fn selected_backend_for(
@@ -221,7 +214,10 @@ fn backend_unavailable_for(choice: BackendChoice) -> WifiError {
 }
 
 /// Discover and store the selected Linux adapter.
-pub fn initialize_backend(choice: BackendChoice) -> WifiResult<&'static str> {
+pub fn initialize_backend(
+    choice: BackendChoice,
+    target_interface: Option<&str>,
+) -> WifiResult<&'static str> {
     let connection = system_connection()?;
     let network_manager_available = service_has_owner(&connection, NETWORK_MANAGER_SERVICE)?;
     let iwd_available = service_has_owner(&connection, IWD_SERVICE)?;
@@ -230,13 +226,13 @@ pub fn initialize_backend(choice: BackendChoice) -> WifiResult<&'static str> {
         let mut last_error = None;
 
         if network_manager_available {
-            match NetworkManagerBackend::discover(&connection) {
+            match NetworkManagerBackend::discover(&connection, target_interface) {
                 Ok(backend) => return store_backend(Arc::new(backend)),
                 Err(error) => last_error = Some(error),
             }
         }
         if iwd_available {
-            match IwdBackend::discover(&connection) {
+            match IwdBackend::discover(&connection, target_interface) {
                 Ok(backend) => return store_backend(Arc::new(backend)),
                 Err(error) => last_error = Some(error),
             }
@@ -249,8 +245,11 @@ pub fn initialize_backend(choice: BackendChoice) -> WifiResult<&'static str> {
         .ok_or_else(|| backend_unavailable_for(choice))?;
 
     let backend: Arc<dyn WifiBackend> = match selected {
-        SelectedBackend::NetworkManager => Arc::new(NetworkManagerBackend::discover(&connection)?),
-        SelectedBackend::Iwd => Arc::new(IwdBackend::discover(&connection)?),
+        SelectedBackend::NetworkManager => Arc::new(NetworkManagerBackend::discover(
+            &connection,
+            target_interface,
+        )?),
+        SelectedBackend::Iwd => Arc::new(IwdBackend::discover(&connection, target_interface)?),
     };
     store_backend(backend)
 }
