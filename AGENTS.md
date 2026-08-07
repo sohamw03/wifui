@@ -139,6 +139,21 @@ the profile's D-Bus secret API. iwd does not expose stored passphrases through i
 API, so iwd secured QR sharing must remain an explanatory unsupported-operation error. The UI
 must never produce a secured QR code without credentials.
 
+## Next Linux backend improvements
+
+The next two backend items are intentionally deferred:
+
+1. Reduce refresh D-Bus/API calls by reusing a single network snapshot and avoiding repeated
+   connected-state, access-point, and saved-profile queries where the backend already has the
+   required data.
+2. Add event-driven access-point updates while retaining periodic refresh as a fallback. NetworkManager
+   and iwd should report nearby-network additions, removals, and relevant metadata changes through
+   their D-Bus signals; Windows should use WLAN scan/network notifications for the equivalent path.
+
+Automated Linux checks do not replace backend validation on real systems. The user must manually test
+the iwd backend on a host running iwd and system D-Bus, and manually test the Windows backend on a real
+Windows WLAN adapter. Record any backend-specific findings before treating a release as verified.
+
 ## Troubleshooting
 
 ### Linux shows a startup spinner
