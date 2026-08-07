@@ -10,7 +10,8 @@ pub struct WifiInfo {
     pub auto_connect: bool,
     pub phy_type: String,
     pub channel: u32,
-    pub frequency: u32,
+    /// Center frequency in Hz. `0` means the backend does not expose it.
+    pub frequency: u64,
     pub link_speed: Option<u32>,
 }
 

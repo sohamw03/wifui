@@ -10,16 +10,16 @@
 [![Crates.io Version](https://img.shields.io/crates/v/wifui)](https://crates.io/crates/wifui)
 ![GitHub Repo stars](https://img.shields.io/github/stars/sohamw03/wifui)
 
-**WifUI** is a blazing fast, lightweight Terminal User Interface (TUI) for managing Wi-Fi connections on **Windows**. Built with Rust and `ratatui`, it offers a keyboard-centric way to scan, connect, and monitor your network status without leaving the terminal.
+**WifUI** is a blazing fast, lightweight Terminal User Interface (TUI) for managing Wi-Fi connections on **Windows and Linux**. Built with Rust and `ratatui`, it offers a keyboard-centric way to scan, connect, and monitor your network status without leaving the terminal.
 
-Linux compilation and TUI support are experimental. The Linux binary launches the interface, but Linux Wi-Fi scanning and management are not implemented yet.
+Linux support is experimental and uses the system D-Bus through NetworkManager or iwd. NetworkManager is preferred by default; use `--backend iwd` when iwd is the intended manager. Linux currently targets the first usable Wi-Fi interface. NetworkManager can read saved secrets for secured QR sharing; iwd does not expose stored passphrases through its public D-Bus API.
 
 ## 🚀 Features
 
 - **Network Scanning**: Instantly discover available Wi-Fi networks.
 - **Seamless Connection**: Connect to open or secured networks.
 - **Network Management**: View detailed network info (SSID, Signal Strength, Security Type, Channel).
-- **Share WiFi**: Generate QR codes to share saved network credentials.
+- **Share WiFi**: Generate QR codes for open networks and saved credentials when key material is available.
 - **Keyboard Driven**: Efficient navigation with Vim-like keybindings.
 
 ## 📸 Screenshots
@@ -88,6 +88,7 @@ wifui
 | :--- | :--- |
 | `--ascii` | Use ASCII icons (no Nerd Fonts required) |
 | `--show-keys` | Show key logger for debugging |
+| `--backend auto\|nm\|iwd` | Select the Linux D-Bus backend (default: `auto`) |
 | `-v`, `--version` | Print version information |
 
 ### Keybindings

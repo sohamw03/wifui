@@ -296,7 +296,7 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
                     0
                 };
 
-                (freq, ch)
+                (freq as u64, ch)
             } else {
                 (0, 0)
             };

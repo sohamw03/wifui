@@ -20,6 +20,9 @@ use crate::{
     },
 };
 
+#[cfg(target_os = "linux")]
+use crate::wifi::{BackendChoice, initialize_backend};
+
 /// A lightweight, keyboard-driven TUI for managing Wi-Fi connections.
 #[derive(Parser, Debug)]
 #[command(
@@ -42,6 +45,11 @@ struct Args {
     /// Show key logger for debugging
     #[arg(long = "show-keys")]
     show_keys: bool,
+
+    /// Select the Linux Wi-Fi backend
+    #[cfg(target_os = "linux")]
+    #[arg(long, value_enum, default_value_t = BackendChoice::Auto)]
+    backend: BackendChoice,
 }
 
 #[tokio::main]
@@ -49,6 +57,15 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let mut state = AppState::new(Vec::new(), args.show_keys, args.ascii);
+
+    #[cfg(target_os = "linux")]
+    let backend_init_error = tokio::task::spawn_blocking(move || initialize_backend(args.backend))
+        .await
+        .map(|result| result.err())
+        .unwrap_or_else(|error| Some(crate::error::WifiError::Internal(error.to_string())));
+    #[cfg(not(target_os = "linux"))]
+    let backend_init_error: Option<crate::error::WifiError> = None;
+
     if is_backend_available() {
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         state.refresh.is_refreshing_networks = true;
@@ -69,7 +86,11 @@ async fn main() -> Result<()> {
         });
     } else {
         state.refresh.is_initial_loading = false;
-        state.ui.error_message = Some(backend_unavailable_message().to_string());
+        state.ui.error_message = Some(
+            backend_init_error
+                .map(|error| error.to_string())
+                .unwrap_or_else(backend_unavailable_message),
+        );
     }
 
     color_eyre::install()?;

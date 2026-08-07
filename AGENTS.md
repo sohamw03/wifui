@@ -6,8 +6,10 @@ This document is the quick orientation guide for contributors and coding agents 
 
 WifUI is a Rust terminal UI for Wi-Fi management.
 
-- Windows is the supported management platform. The backend uses the native Windows WLAN API.
-- Linux builds and launches the TUI experimentally, but Wi-Fi scanning and management are intentionally not implemented yet.
+- Windows uses the native Windows WLAN API.
+- Linux builds and launches the TUI with a runtime-selected NetworkManager or iwd D-Bus backend.
+- Linux initially targets the first usable Wi-Fi interface. NetworkManager is preferred in `auto` mode.
+- Linux supports saved-profile auto-connect toggling and profile deletion through the selected daemon.
 - Other non-Windows targets compile against an unsupported placeholder backend.
 - The frontend talks only to the platform facade in `src/wifi/mod.rs`; UI code should not import Windows APIs.
 
@@ -36,7 +38,7 @@ cargo test --offline
 ```text
 src/main.rs
   ├─ creates AppState
-  ├─ starts the initial refresh only when the backend is available
+  ├─ initializes the selected Linux backend and starts the initial refresh when available
   └─ initializes the terminal and enters event::run
 
 src/event/mod.rs
@@ -50,6 +52,7 @@ src/ui.rs
 
 src/wifi/mod.rs
   └─ selects the platform backend at compile time and re-exports the stable API
+       └─ Linux dispatches to NetworkManager or iwd over system D-Bus
 ```
 
 The normal runtime flow is:
@@ -63,7 +66,7 @@ The normal runtime flow is:
 
 | Path | Responsibility |
 | --- | --- |
-| `Cargo.toml` | Package metadata, shared dependencies, and target-specific Windows dependency selection |
+| `Cargo.toml` | Package metadata, shared dependencies, and target-specific Windows/Linux dependency selection |
 | `Cargo.lock` | Resolved dependency versions; retain Windows entries even on Linux |
 | `src/main.rs` | CLI arguments, terminal setup/restore, initial backend refresh |
 | `src/app.rs` | `AppState` and the network, UI, connection, input, and refresh state models |
@@ -81,7 +84,10 @@ The normal runtime flow is:
 | `src/wifi/scanning.rs` | Windows scan trigger |
 | `src/wifi/listener.rs` | Windows WLAN notification listener |
 | `src/wifi/handle.rs` | Safe Windows WLAN handle wrapper |
-| `src/wifi/linux.rs` | Linux placeholder backend; every operation returns `UnsupportedPlatform` |
+| `src/wifi/linux.rs` | Linux runtime registry, backend choice, dispatcher, and stable API |
+| `src/wifi/linux_network_manager.rs` | NetworkManager system-D-Bus adapter and conversion helpers |
+| `src/wifi/linux_iwd.rs` | iwd system-D-Bus adapter, conversion helpers, and temporary credential agent |
+| `src/wifi/linux_listener.rs` | Long-lived Linux D-Bus signal worker and shutdown guard |
 | `src/wifi/unsupported.rs` | Same placeholder contract for other unsupported targets |
 | `dist-workspace.toml` | cargo-dist release targets and installer configuration |
 | `wix/main.wxs` | WiX installer template for Windows |
@@ -93,8 +99,13 @@ The normal runtime flow is:
 | Target | Backend | `is_backend_available()` |
 | --- | --- | --- |
 | Windows | `connection`, `handle`, `listener`, `profile`, `scanning` | `true` |
-| Linux | `linux` placeholder | `false` |
+| Linux | runtime NetworkManager or iwd adapter | `true` after successful initialization |
 | Other non-Windows targets | `unsupported` placeholder | `false` |
+
+On Linux, `--backend auto` is the default and chooses NetworkManager before iwd. `--backend nm`
+and `--backend iwd` are explicit selections and never silently fall back to another daemon.
+Initialization uses the system D-Bus name owner query and the first powered/managed Wi-Fi station.
+The Linux dependency is target-specific `zbus`; no Linux D-Bus crate is added to Windows builds.
 
 The stable frontend-facing functions are:
 
@@ -115,21 +126,40 @@ When adding or replacing a backend, preserve these signatures and return `WifiEr
 - `ConnectionState` owns connection tasks, the listener, and connection events.
 - `RefreshState` owns refresh timing, background refresh channels, burst refreshes, and startup loading state.
 
-Background work must send its result back to the event loop. Refresh failures should set `state.ui.error_message`; do not silently discard a failed refresh. Unsupported-platform operations should fail through `WifiError::UnsupportedPlatform` rather than panic or report success.
+Background work must send its result back to the event loop. Refresh failures should set `state.ui.error_message`; do not silently discard a failed refresh. Backend-unavailable, D-Bus, missing-interface, and unsupported-operation failures must remain visible through `WifiError` rather than panic or report success. Passwords must never be included in errors or logs.
+
+Linux phase one supports scanning, refresh, connected-state reporting, connection events, open
+connections, password connections, hidden-network provisioning, saved-network detection and
+saved-profile connection, and disconnect. iwd secured connections use a temporary credential
+agent whose passphrase is restricted to the requested network and cleared after the attempt.
+iwd WEP connection requests return a clear unsupported-operation error.
+
+NetworkManager saved-password readback and secured-network QR sharing are supported through
+the profile's D-Bus secret API. iwd does not expose stored passphrases through its public D-Bus
+API, so iwd secured QR sharing must remain an explanatory unsupported-operation error. The UI
+must never produce a secured QR code without credentials.
 
 ## Troubleshooting
 
 ### Linux shows a startup spinner
 
-The Linux path should set `RefreshState::is_initial_loading` to `false` before entering the event loop. Check `is_backend_available()` handling in `src/main.rs` and the unsupported message branch in `src/ui.rs`.
+The Linux path should set `RefreshState::is_initial_loading` to `false` before entering the event loop when no daemon or interface is available. Check `initialize_backend()` handling in `src/main.rs` and the backend status branch in `src/ui.rs`.
 
 ### Linux reports missing Wi-Fi support
 
-That is expected for the current milestone. `src/wifi/linux.rs` is deliberately a placeholder; NetworkManager, iwd, and other Linux integrations are not present.
+Ensure the selected daemon owns its system-D-Bus name and that it exposes a powered Wi-Fi
+interface. In `auto` mode NetworkManager is tried first; use `--backend iwd` when iwd is the
+intended manager and NetworkManager is not concurrently managing the same interface.
 
 ### Windows crates appear in a Linux build
 
 Check that the `windows` crate remains under `[target.'cfg(windows)'.dependencies]` in `Cargo.toml`, and that Windows-only modules remain behind `#[cfg(windows)]`. Windows entries in `Cargo.lock` may remain and should not be manually removed.
+
+### Linux D-Bus operations fail
+
+Linux assumes the system D-Bus is available and that the daemon handles IP configuration. Check
+the daemon logs and run the matching explicit backend option. Do not substitute `nmcli`, `iwctl`,
+or parsed command output in the adapter; all operations belong in the zbus D-Bus layer.
 
 ### Refresh or connection errors are not visible
 
@@ -141,7 +171,7 @@ Try `cargo run -- --ascii` in a real terminal. The default icon set expects a Ne
 
 ## Release notes
 
-The current cargo-dist configuration targets `x86_64-pc-windows-msvc` and generates a PowerShell installer. The WiX template packages `wifui.exe` and can add it to PATH. Linux support is not currently a managed release target or a functional Wi-Fi-management distribution.
+The current cargo-dist configuration targets `x86_64-pc-windows-msvc` and generates a PowerShell installer. The WiX template packages `wifui.exe` and can add it to PATH. Linux support is not currently a managed cargo-dist release target; a Linux host must provide NetworkManager or iwd and system D-Bus.
 
 ## Support report template
 

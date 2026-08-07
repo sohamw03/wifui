@@ -85,15 +85,36 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
             }
         }
 
+        if let Some(rx) = &mut state.ui.qr_result_rx {
+            if let Ok(result) = rx.try_recv() {
+                state.ui.qr_result_rx = None;
+                match result {
+                    Ok(qr_lines) => {
+                        state.ui.qr_code_lines = qr_lines;
+                        state.ui.show_qr_popup = true;
+                    }
+                    Err(error) => {
+                        state.ui.error_message =
+                            Some(format!("Could not share secured Wi-Fi network: {error}"));
+                    }
+                }
+            }
+        }
+
         // Check for connection result
         if let Some(rx) = &mut state.connection.connection_result_rx {
             if let Ok(result) = rx.try_recv() {
                 state.connection.connection_result_rx = None;
                 if let Err(e) = result {
+                    let was_connecting = state.connection.is_connecting;
                     state.connection.is_connecting = false;
                     state.connection.target_ssid = None;
                     state.connection.connection_start_time = None;
-                    state.ui.error_message = Some(format!("Failed to connect: {}", e));
+                    state.ui.error_message = Some(if was_connecting {
+                        format!("Failed to connect: {e}")
+                    } else {
+                        format!("Wi-Fi operation failed: {e}")
+                    });
                 } else {
                     // Connection initiated successfully, now wait for it to actually connect
                     state.refresh.refresh_burst = config::CONNECTION_REFRESH_BURST;

@@ -96,7 +96,11 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(border_style)
-        .title(format!(" WIFUI v{} ", env!("CARGO_PKG_VERSION")))
+        .title(format!(
+            " WIFUI v{} • {} ",
+            env!("CARGO_PKG_VERSION"),
+            crate::wifi::backend_name()
+        ))
         .title_alignment(Alignment::Center)
         .title_style(title_style);
 
@@ -440,6 +444,15 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 theme::RED
             };
             let signal_bar = "█".repeat(signal_bar_width) + &"░".repeat(10 - signal_bar_width);
+            let channel_text = if wifi.channel == 0 || wifi.frequency == 0 {
+                "Unknown".to_string()
+            } else {
+                format!(
+                    "{} @ {:.3} GHz",
+                    wifi.channel,
+                    wifi.frequency as f64 / 1_000_000.0
+                )
+            };
 
             let mut info = vec![
                 if wifi.is_connected {
@@ -519,14 +532,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 ]),
                 Line::from(vec![
                     label("Channel"),
-                    Span::styled(
-                        format!(
-                            "{} @ {:.3} GHz",
-                            wifi.channel,
-                            wifi.frequency as f32 / 1_000_000.0
-                        ),
-                        value_style,
-                    ),
+                    Span::styled(channel_text, value_style),
                 ]),
             ];
 

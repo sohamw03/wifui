@@ -10,6 +10,21 @@ pub enum WifiError {
     #[error("Wi-Fi backend is not implemented for this platform")]
     UnsupportedPlatform,
 
+    #[error("{backend} Wi-Fi backend is unavailable")]
+    BackendUnavailable { backend: String },
+
+    #[error("{backend} reported no usable Wi-Fi interface")]
+    MissingInterface { backend: String },
+
+    #[error("D-Bus operation failed: {operation}")]
+    Dbus { operation: String },
+
+    #[error("{backend} does not support {operation} yet")]
+    UnsupportedOperation { backend: String, operation: String },
+
+    #[error("Wi-Fi network was not found: {ssid}")]
+    NetworkNotFound { ssid: String },
+
     #[error("Failed to open WLAN handle (code: {code})")]
     HandleOpenFailed { code: u32 },
 

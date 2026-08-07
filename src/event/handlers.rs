@@ -8,6 +8,16 @@ use secrecy::SecretString;
 use std::time::Instant;
 use tokio::sync::mpsc;
 
+async fn disconnect_if_connected() {
+    let is_connected = matches!(
+        tokio::task::spawn_blocking(get_connected_ssid).await,
+        Ok(Ok(Some(_)))
+    );
+    if is_connected {
+        let _ = tokio::task::spawn_blocking(crate::wifi::disconnect_and_wait).await;
+    }
+}
+
 /// Handle keyboard events for the QR code popup
 pub fn handle_qr_popup(key: KeyEvent, state: &mut AppState) -> bool {
     match key.code {
@@ -66,11 +76,7 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
                         state.connection.connection_result_rx = Some(rx);
 
                         tokio::spawn(async move {
-                            if get_connected_ssid().unwrap_or(None).is_some() {
-                                let _ =
-                                    tokio::task::spawn_blocking(crate::wifi::disconnect_and_wait)
-                                        .await;
-                            }
+                            disconnect_if_connected().await;
                             let result = tokio::task::spawn_blocking(move || {
                                 if security == "Open" {
                                     crate::wifi::connect_open(&ssid, hidden)
@@ -261,9 +267,7 @@ pub fn handle_password_popup(key: KeyEvent, state: &mut AppState) -> bool {
                     .cloned();
 
                 tokio::spawn(async move {
-                    if get_connected_ssid().unwrap_or(None).is_some() {
-                        let _ = tokio::task::spawn_blocking(crate::wifi::disconnect_and_wait).await;
-                    }
+                    disconnect_if_connected().await;
                     let result = tokio::task::spawn_blocking(move || {
                         if let Some(info) = wifi_info {
                             crate::wifi::connect_with_password(
@@ -385,9 +389,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                             let _ = tx.send(result).await;
                         });
                     } else if wifi.authentication != "Open" {
-                        // Check if profile exists
-                        let saved_profiles = crate::wifi::get_saved_profiles().unwrap_or_default();
-                        if saved_profiles.contains(&wifi.ssid) {
+                        if wifi.is_saved {
                             state.connection.is_connecting = true;
                             state.connection.target_ssid = Some(wifi.ssid.clone());
                             state.connection.connection_start_time = Some(Instant::now());
@@ -396,12 +398,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                             state.connection.connection_result_rx = Some(rx);
 
                             tokio::spawn(async move {
-                                if get_connected_ssid().unwrap_or(None).is_some() {
-                                    let _ = tokio::task::spawn_blocking(
-                                        crate::wifi::disconnect_and_wait,
-                                    )
-                                    .await;
-                                }
+                                disconnect_if_connected().await;
                                 let result = tokio::task::spawn_blocking(move || {
                                     crate::wifi::connect_profile(&ssid)
                                 })
@@ -426,11 +423,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                         state.connection.connection_result_rx = Some(rx);
 
                         tokio::spawn(async move {
-                            if get_connected_ssid().unwrap_or(None).is_some() {
-                                let _ =
-                                    tokio::task::spawn_blocking(crate::wifi::disconnect_and_wait)
-                                        .await;
-                            }
+                            disconnect_if_connected().await;
                             let result = tokio::task::spawn_blocking(move || {
                                 crate::wifi::connect_open(&ssid, false)
                             })
@@ -526,20 +519,37 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                     if wifi.is_saved {
                         let ssid = wifi.ssid.clone();
                         let auth = wifi.authentication.clone();
-                        let password_result = crate::wifi::get_wifi_password(&ssid);
+                        if auth == "Open" || auth == "open" {
+                            let qr_lines = generate_wifi_qr(&ssid, &auth, None);
+                            state.ui.qr_code_lines = qr_lines;
+                            state.ui.show_qr_popup = true;
+                        } else if qr_auth_type(&auth).is_none() {
+                            state.ui.error_message = Some(
+                                "Secured-network QR sharing is unavailable for this security type"
+                                    .to_string(),
+                            );
+                        } else if state.ui.qr_result_rx.is_none() {
+                            let password_ssid = ssid.clone();
+                            let (tx, rx) = mpsc::channel(1);
+                            state.ui.qr_result_rx = Some(rx);
 
-                        match password_result {
-                            Ok(password_opt) => {
-                                let qr_lines =
-                                    generate_wifi_qr(&ssid, &auth, password_opt.as_ref());
-                                state.ui.qr_code_lines = qr_lines;
-                                state.ui.show_qr_popup = true;
-                            }
-                            Err(_) => {
-                                let qr_lines = generate_wifi_qr(&ssid, &auth, None);
-                                state.ui.qr_code_lines = qr_lines;
-                                state.ui.show_qr_popup = true;
-                            }
+                            tokio::spawn(async move {
+                                let result = tokio::task::spawn_blocking(move || {
+                                    crate::wifi::get_wifi_password(&password_ssid)
+                                })
+                                .await;
+                                let result = match result {
+                                    Ok(Ok(Some(password))) => {
+                                        Ok(generate_wifi_qr(&ssid, &auth, Some(&password)))
+                                    }
+                                    Ok(Ok(None)) => {
+                                        Err(eyre!("the saved profile has no readable password"))
+                                    }
+                                    Ok(Err(error)) => Err(eyre!(error.to_string())),
+                                    Err(error) => Err(eyre!(error.to_string())),
+                                };
+                                let _ = tx.send(result).await;
+                            });
                         }
                     }
                 }
@@ -556,12 +566,7 @@ fn generate_wifi_qr(ssid: &str, auth: &str, password: Option<&SecretString>) -> 
     use qrcode::render::unicode;
     use secrecy::ExposeSecret;
 
-    let auth_type = match auth {
-        "WPA3-SAE" | "WPA3" => "WPA",
-        "WPA2-PSK" | "WPA2" | "WPA-PSK" | "WPA" => "WPA",
-        "Open" | "open" => "nopass",
-        _ => "WPA",
-    };
+    let auth_type = qr_auth_type(auth).unwrap_or("WPA");
 
     let qr_string = if auth_type == "nopass" {
         format!("WIFI:S:{};T:nopass;;", escape_special_chars(ssid))
@@ -585,10 +590,40 @@ fn generate_wifi_qr(ssid: &str, auth: &str, password: Option<&SecretString>) -> 
     }
 }
 
+fn qr_auth_type(auth: &str) -> Option<&'static str> {
+    match auth {
+        "Open" | "open" => Some("nopass"),
+        "WPA3-SAE" | "WPA3" | "WPA2-PSK" | "WPA2-Personal" | "WPA-PSK" | "WPA-Personal" | "WPA" => {
+            Some("WPA")
+        }
+        "Shared" | "WEP" => Some("WEP"),
+        _ => None,
+    }
+}
+
 /// Escape special characters for WiFi QR code format
 fn escape_special_chars(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace(';', "\\;")
         .replace(',', "\\,")
         .replace(':', "\\:")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qr_supports_personal_security_types_only() {
+        assert_eq!(qr_auth_type("Open"), Some("nopass"));
+        assert_eq!(qr_auth_type("WPA3-SAE"), Some("WPA"));
+        assert_eq!(qr_auth_type("Shared"), Some("WEP"));
+        assert_eq!(qr_auth_type("WPA2"), None);
+        assert_eq!(qr_auth_type("Unknown"), None);
+    }
+
+    #[test]
+    fn qr_escapes_wifi_special_characters() {
+        assert_eq!(escape_special_chars(r"a;b,c:d\\e"), r"a\;b\,c\:d\\\\e");
+    }
 }
