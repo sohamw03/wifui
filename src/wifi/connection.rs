@@ -181,6 +181,14 @@ pub fn get_connected_ssid() -> WifiResult<Option<String>> {
     Ok(connected_ssid)
 }
 
+fn format_bssid(bssid: [u8; 6]) -> String {
+    bssid
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
 /// Get list of available WiFi networks
 #[allow(non_upper_case_globals)]
 pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
@@ -205,7 +213,7 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
         }
 
         // Get current connection info for link speed
-        let mut current_connection: Option<(String, u32)> = None;
+        let mut current_connection: Option<(String, u32, [u8; 6])> = None;
         let mut data_size = 0;
         let mut data_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
         let mut opcode_value_type = wlan_opcode_value_type_invalid;
@@ -227,7 +235,8 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
                 let ssid_bytes = &conn.wlanAssociationAttributes.dot11Ssid.ucSSID[..ssid_len];
                 let ssid = String::from_utf8_lossy(ssid_bytes).to_string();
                 let tx_rate = conn.wlanAssociationAttributes.ulTxRate;
-                current_connection = Some((ssid, tx_rate));
+                let bssid = conn.wlanAssociationAttributes.dot11Bssid;
+                current_connection = Some((ssid, tx_rate, bssid));
             }
             WlanFreeMemory(data_ptr);
         }
@@ -268,7 +277,12 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
             let ssid_bytes = &item.dot11Ssid.ucSSID[..ssid_len];
             let ssid = String::from_utf8_lossy(ssid_bytes).to_string();
 
-            // Find best BSS entry for this SSID
+            let connected_bssid = current_connection
+                .as_ref()
+                .and_then(|(connected_ssid, _, bssid)| (connected_ssid == &ssid).then_some(*bssid));
+
+            // Prefer the active BSSID for the connected SSID; otherwise use the
+            // strongest BSS for this SSID as the representative row.
             let best_bss = bss_entries
                 .iter()
                 .filter(|bss| {
@@ -278,9 +292,14 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
                     }
                     &bss.dot11Ssid.ucSSID[..bss_ssid_len] == ssid_bytes
                 })
-                .max_by_key(|bss| bss.lRssi);
+                .max_by_key(|bss| {
+                    (
+                        connected_bssid.is_some_and(|bssid| bss.dot11Bssid == bssid),
+                        bss.lRssi,
+                    )
+                });
 
-            let (frequency, channel) = if let Some(bss) = best_bss {
+            let (frequency, channel, bssid) = if let Some(bss) = best_bss {
                 let freq = bss.ulChCenterFrequency;
                 let ch = if (2412000..=2484000).contains(&freq) {
                     if freq == 2484000 {
@@ -296,17 +315,17 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
                     0
                 };
 
-                (freq as u64, ch)
+                (freq as u64, ch, Some(format_bssid(bss.dot11Bssid)))
             } else {
-                (0, 0)
+                (0, 0, None)
             };
 
             let mut link_speed = None;
             let mut is_connected = false;
-            if let Some((ref conn_ssid, conn_rate)) = current_connection
+            if let Some((ref conn_ssid, conn_rate, _)) = current_connection
                 && *conn_ssid == ssid
             {
-                link_speed = Some(conn_rate / 1000); // Kbps to Mbps
+                link_speed = Some(conn_rate / 1000).filter(|rate| *rate > 0); // Kbps to Mbps
                 is_connected = true;
             }
 
@@ -337,10 +356,7 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
             .to_string();
 
             let is_saved = (item.dwFlags & WLAN_AVAILABLE_NETWORK_HAS_PROFILE) != 0;
-            let mut auto_connect = false;
-            if is_saved {
-                auto_connect = is_profile_auto_connect(&handle, &guid, &ssid);
-            }
+            let auto_connect = is_saved && is_profile_auto_connect(&handle, &guid, &ssid);
 
             let phy_types = std::slice::from_raw_parts(
                 item.dot11PhyTypes.as_ptr(),
@@ -377,6 +393,7 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
                 channel,
                 frequency,
                 link_speed,
+                bssid,
             };
 
             wifi_map
@@ -387,9 +404,14 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
                     }
                     if new_info.is_connected {
                         info.is_connected = true;
+                        info.link_speed = new_info.link_speed;
+                        info.bssid = new_info.bssid.clone();
                     }
                     if new_info.signal > info.signal {
                         info.signal = new_info.signal;
+                        info.channel = new_info.channel;
+                        info.frequency = new_info.frequency;
+                        info.bssid = new_info.bssid.clone();
                     }
                 })
                 .or_insert(new_info);

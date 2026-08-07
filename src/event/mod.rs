@@ -29,6 +29,30 @@ use tokio::sync::mpsc;
 
 struct CursorStyleGuard;
 
+fn start_network_refresh(state: &mut AppState) {
+    if state.refresh.is_refreshing_networks || !is_backend_available() {
+        return;
+    }
+
+    state.refresh.is_refreshing_networks = true;
+    let (tx, rx) = mpsc::channel(1);
+    state.refresh.network_update_rx = Some(rx);
+
+    tokio::spawn(async move {
+        let result = tokio::task::spawn_blocking(|| {
+            let networks = get_wifi_networks()?;
+            let connected = get_connected_ssid()?;
+            Ok((networks, connected))
+        })
+        .await;
+        let result = match result {
+            Ok(inner) => inner,
+            Err(e) => Err(eyre!(e.to_string())),
+        };
+        let _ = tx.send(result).await;
+    });
+}
+
 impl Drop for CursorStyleGuard {
     fn drop(&mut self) {
         let _ = crossterm::execute!(std::io::stdout(), SetCursorStyle::DefaultUserShape);
@@ -103,40 +127,25 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
 
         // Check for connection result
         if let Some(rx) = &mut state.connection.connection_result_rx {
-            if let Ok(result) = rx.try_recv() {
-                state.connection.connection_result_rx = None;
-                if let Err(e) = result {
-                    let was_connecting = state.connection.is_connecting;
-                    state.connection.is_connecting = false;
-                    state.connection.target_ssid = None;
-                    state.connection.connection_start_time = None;
-                    state.ui.error_message = Some(if was_connecting {
-                        format!("Failed to connect: {e}")
+            if let Ok((operation_id, result)) = rx.try_recv() {
+                if state.connection.active_operation_id == Some(operation_id) {
+                    state.connection.connection_result_rx = None;
+                    state.connection.active_operation_id = None;
+                    if let Err(e) = result {
+                        let was_connecting = state.connection.is_connecting;
+                        if was_connecting {
+                            state.connection.finish_connection_attempt();
+                        }
+                        state.ui.error_message = Some(if was_connecting {
+                            format!("Failed to connect: {e}")
+                        } else {
+                            format!("Wi-Fi operation failed: {e}")
+                        });
                     } else {
-                        format!("Wi-Fi operation failed: {e}")
-                    });
-                } else {
-                    // Connection initiated successfully, now wait for it to actually connect
-                    state.refresh.refresh_burst = config::CONNECTION_REFRESH_BURST;
-                }
-                // Trigger background refresh instead of blocking.
-                if is_backend_available() {
-                    state.refresh.is_refreshing_networks = true;
-                    let (tx, rx) = mpsc::channel(1);
-                    state.refresh.network_update_rx = Some(rx);
-                    tokio::spawn(async move {
-                        let result = tokio::task::spawn_blocking(|| {
-                            let networks = get_wifi_networks()?;
-                            let connected = get_connected_ssid()?;
-                            Ok((networks, connected))
-                        })
-                        .await;
-                        let result = match result {
-                            Ok(inner) => inner,
-                            Err(e) => Err(eyre!(e.to_string())),
-                        };
-                        let _ = tx.send(result).await;
-                    });
+                        // Connection initiated successfully, now wait for it to actually connect.
+                        state.refresh.refresh_burst = config::CONNECTION_REFRESH_BURST;
+                    }
+                    start_network_refresh(state);
                 }
             }
         }
@@ -149,12 +158,12 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                         let connection_changed = state.network.connected_ssid != connected_ssid;
 
                         // Try to preserve selection
-                        let selected_ssid = state
+                        let selected_network = state
                             .ui
                             .l_state
                             .selected()
-                            .and_then(|i| state.network.wifi_list.get(i))
-                            .map(|w| w.ssid.clone());
+                            .and_then(|i| state.network.filtered_wifi_list.get(i))
+                            .map(|w| (w.ssid.clone(), w.bssid.clone()));
 
                         state.network.wifi_list = new_list;
                         state.network.connected_ssid = connected_ssid;
@@ -162,13 +171,19 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
 
                         if connection_changed && state.network.connected_ssid.is_some() {
                             state.ui.l_state.select(Some(0));
-                        } else if let Some(ssid) = selected_ssid {
-                            if let Some(pos) = state
-                                .network
-                                .filtered_wifi_list
-                                .iter()
-                                .position(|w| w.ssid == ssid)
-                            {
+                        } else if let Some((ssid, bssid)) = selected_network {
+                            let position = bssid.as_ref().and_then(|selected_bssid| {
+                                state.network.filtered_wifi_list.iter().position(|w| {
+                                    w.ssid == ssid && w.bssid.as_ref() == Some(selected_bssid)
+                                })
+                            });
+                            if let Some(pos) = position.or_else(|| {
+                                state
+                                    .network
+                                    .filtered_wifi_list
+                                    .iter()
+                                    .position(|w| w.ssid == ssid)
+                            }) {
                                 state.ui.l_state.select(Some(pos));
                             } else {
                                 state.ui.l_state.select(Some(0));
@@ -190,34 +205,35 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
         }
 
         // Check for connection events
+        let mut connection_events = Vec::new();
         if let Some(rx) = &mut state.connection.connection_event_rx {
             while let Ok(event) = rx.try_recv() {
-                match event {
-                    ConnectionEvent::Connected(ssid) => {
-                        if let Some(target) = &state.connection.target_ssid {
-                            if *target == ssid {
-                                state.connection.is_connecting = false;
-                                state.connection.target_ssid = None;
-                                state.connection.connection_start_time = None;
-                                state.refresh.refresh_burst = config::DISCONNECT_REFRESH_BURST;
-                            }
-                        }
-                    }
-                    ConnectionEvent::Disconnected => {
+                connection_events.push(event);
+            }
+        }
+        for event in connection_events {
+            match event {
+                ConnectionEvent::Connected(ssid) => {
+                    if state.connection.active_connection_attempt_id.is_some()
+                        && let Some(target) = &state.connection.target_ssid
+                        && *target == ssid
+                    {
+                        state.connection.finish_connection_attempt();
                         state.refresh.refresh_burst = config::DISCONNECT_REFRESH_BURST;
                     }
-                    ConnectionEvent::Failed {
-                        ssid, reason_str, ..
-                    } => {
-                        if let Some(target) = &state.connection.target_ssid {
-                            if *target == ssid {
-                                state.connection.is_connecting = false;
-                                state.connection.target_ssid = None;
-                                state.connection.connection_start_time = None;
-                                state.ui.error_message =
-                                    Some(format!("Connection failed: {}", reason_str));
-                            }
-                        }
+                }
+                ConnectionEvent::Disconnected => {
+                    state.refresh.refresh_burst = config::DISCONNECT_REFRESH_BURST;
+                }
+                ConnectionEvent::Failed {
+                    ssid, reason_str, ..
+                } => {
+                    if state.connection.active_connection_attempt_id.is_some()
+                        && let Some(target) = &state.connection.target_ssid
+                        && *target == ssid
+                    {
+                        state.connection.finish_connection_attempt();
+                        state.ui.error_message = Some(format!("Connection failed: {}", reason_str));
                     }
                 }
             }
@@ -230,18 +246,14 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
             if let Some(target) = &state.connection.target_ssid {
                 if let Some(connected) = &state.network.connected_ssid {
                     if connected == target {
-                        state.connection.is_connecting = false;
-                        state.connection.target_ssid = None;
-                        state.connection.connection_start_time = None;
+                        state.connection.finish_connection_attempt();
                     }
                 }
 
                 // Check for timeout
                 if let Some(start_time) = state.connection.connection_start_time {
                     if start_time.elapsed() > Duration::from_secs(config::CONNECTION_TIMEOUT_SECS) {
-                        state.connection.is_connecting = false;
-                        state.connection.target_ssid = None;
-                        state.connection.connection_start_time = None;
+                        state.connection.finish_connection_attempt();
                         state.ui.error_message =
                             Some("Connection timed out (No response from OS)".to_string());
                     }
@@ -249,7 +261,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
             } else {
                 // If no target SSID is set but is_connecting is true, check connection result
                 if state.connection.connection_result_rx.is_none() {
-                    state.connection.is_connecting = false;
+                    state.connection.finish_connection_attempt();
                 }
             }
         }
@@ -275,23 +287,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
             if state.refresh.refresh_burst > 0 {
                 state.refresh.refresh_burst -= 1;
             }
-            state.refresh.is_refreshing_networks = true;
-            let (tx, rx) = mpsc::channel(1);
-            state.refresh.network_update_rx = Some(rx);
-
-            tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(|| {
-                    let networks = get_wifi_networks()?;
-                    let connected = get_connected_ssid()?;
-                    Ok((networks, connected))
-                })
-                .await;
-                let result = match result {
-                    Ok(inner) => inner,
-                    Err(e) => Err(eyre!(e.to_string())),
-                };
-                let _ = tx.send(result).await;
-            });
+            start_network_refresh(state);
         }
 
         if event::poll(Duration::from_millis(config::EVENT_POLL_MS))? {

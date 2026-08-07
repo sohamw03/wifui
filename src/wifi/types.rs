@@ -13,6 +13,8 @@ pub struct WifiInfo {
     /// Center frequency in Hz. `0` means the backend does not expose it.
     pub frequency: u64,
     pub link_speed: Option<u32>,
+    /// BSSID of the access point represented by this row, when exposed.
+    pub bssid: Option<String>,
 }
 
 /// Connection events from the WiFi listener

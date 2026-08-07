@@ -62,11 +62,8 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
                 4 => {
                     // Connect
                     if !state.inputs.manual_ssid_input.value.is_empty() {
-                        state.connection.is_connecting = true;
-                        state.connection.target_ssid =
-                            Some(state.inputs.manual_ssid_input.value.clone());
-                        state.connection.connection_start_time = Some(Instant::now());
                         let ssid = state.inputs.manual_ssid_input.value.clone();
+                        let operation_id = state.connection.begin_connection_attempt(ssid.clone());
                         let password =
                             SecretString::from(state.inputs.manual_password_input.value.clone());
                         let security = state.inputs.manual_security.clone();
@@ -96,7 +93,9 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
                             })
                             .await
                             .unwrap_or_else(|e| Err(WifiError::Internal(e.to_string())));
-                            let _ = tx.send(result.map_err(|e: WifiError| e.into())).await;
+                            let _ = tx
+                                .send((operation_id, result.map_err(|e: WifiError| e.into())))
+                                .await;
                         });
 
                         state.ui.show_manual_add_popup = false;
@@ -252,9 +251,7 @@ pub fn handle_password_popup(key: KeyEvent, state: &mut AppState) -> bool {
     match key.code {
         event::KeyCode::Enter => {
             if let Some(ssid) = state.connection.connecting_to_ssid.take() {
-                state.connection.is_connecting = true;
-                state.connection.target_ssid = Some(ssid.clone());
-                state.connection.connection_start_time = Some(Instant::now());
+                let operation_id = state.connection.begin_connection_attempt(ssid.clone());
                 let password = SecretString::from(state.inputs.password_input.value.clone());
                 let (tx, rx) = mpsc::channel(1);
                 state.connection.connection_result_rx = Some(rx);
@@ -285,7 +282,9 @@ pub fn handle_password_popup(key: KeyEvent, state: &mut AppState) -> bool {
                     })
                     .await
                     .unwrap_or_else(|e| Err(WifiError::Internal(e.to_string())));
-                    let _ = tx.send(result.map_err(|e: WifiError| e.into())).await;
+                    let _ = tx
+                        .send((operation_id, result.map_err(|e: WifiError| e.into())))
+                        .await;
                 });
             }
             state.ui.show_password_popup = false;
@@ -349,8 +348,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
         }
         event::KeyCode::Esc => {
             if state.connection.is_connecting {
-                state.connection.is_connecting = false;
-                state.connection.target_ssid = None;
+                state.connection.cancel_operation();
                 state.connection.connection_result_rx = None;
             } else if !state.inputs.search_input.value.is_empty() {
                 state.inputs.search_input.clear();
@@ -371,13 +369,10 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
         event::KeyCode::Enter => {
             if let Some(selected) = state.ui.l_state.selected() {
                 if let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned() {
-                    let is_connected = if let Some(connected_ssid) = &state.network.connected_ssid {
-                        wifi.ssid == *connected_ssid
-                    } else {
-                        false
-                    };
+                    let is_connected = wifi.is_connected;
 
                     if is_connected {
+                        let operation_id = state.connection.begin_operation();
                         let (tx, rx) = mpsc::channel(1);
                         state.connection.connection_result_rx = Some(rx);
                         tokio::spawn(async move {
@@ -386,14 +381,13 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                                 Ok(inner) => inner.map_err(|e: WifiError| e.into()),
                                 Err(e) => Err(eyre!(e.to_string())),
                             };
-                            let _ = tx.send(result).await;
+                            let _ = tx.send((operation_id, result)).await;
                         });
                     } else if wifi.authentication != "Open" {
                         if wifi.is_saved {
-                            state.connection.is_connecting = true;
-                            state.connection.target_ssid = Some(wifi.ssid.clone());
-                            state.connection.connection_start_time = Some(Instant::now());
                             let ssid = wifi.ssid.clone();
+                            let operation_id =
+                                state.connection.begin_connection_attempt(ssid.clone());
                             let (tx, rx) = mpsc::channel(1);
                             state.connection.connection_result_rx = Some(rx);
 
@@ -407,7 +401,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                                     Ok(inner) => inner.map_err(|e: WifiError| e.into()),
                                     Err(e) => Err(eyre!(e.to_string())),
                                 };
-                                let _ = tx.send(result).await;
+                                let _ = tx.send((operation_id, result)).await;
                             });
                         } else {
                             state.ui.show_password_popup = true;
@@ -415,10 +409,8 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                             state.connection.connecting_to_ssid = Some(wifi.ssid.clone());
                         }
                     } else {
-                        state.connection.is_connecting = true;
-                        state.connection.target_ssid = Some(wifi.ssid.clone());
-                        state.connection.connection_start_time = Some(Instant::now());
                         let ssid = wifi.ssid.clone();
+                        let operation_id = state.connection.begin_connection_attempt(ssid.clone());
                         let (tx, rx) = mpsc::channel(1);
                         state.connection.connection_result_rx = Some(rx);
 
@@ -432,7 +424,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                                 Ok(inner) => inner.map_err(|e: WifiError| e.into()),
                                 Err(e) => Err(eyre!(e.to_string())),
                             };
-                            let _ = tx.send(result).await;
+                            let _ = tx.send((operation_id, result)).await;
                         });
                     }
                 }
@@ -472,6 +464,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                     if wifi.is_saved {
                         let ssid = wifi.ssid.clone();
                         let auto_connect = !wifi.auto_connect;
+                        let operation_id = state.connection.begin_operation();
                         let (tx, rx) = mpsc::channel(1);
                         state.connection.connection_result_rx = Some(rx);
 
@@ -484,7 +477,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                                 Ok(inner) => inner.map_err(|e: WifiError| e.into()),
                                 Err(e) => Err(eyre!(e.to_string())),
                             };
-                            let _ = tx.send(result).await;
+                            let _ = tx.send((operation_id, result)).await;
                         });
                     }
                 }
@@ -495,6 +488,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                 if let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned() {
                     if wifi.is_saved {
                         let ssid = wifi.ssid.clone();
+                        let operation_id = state.connection.begin_operation();
                         let (tx, rx) = mpsc::channel(1);
                         state.connection.connection_result_rx = Some(rx);
 
@@ -507,7 +501,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                                 Ok(inner) => inner.map_err(|e: WifiError| e.into()),
                                 Err(e) => Err(eyre!(e.to_string())),
                             };
-                            let _ = tx.send(result).await;
+                            let _ = tx.send((operation_id, result)).await;
                         });
                     }
                 }

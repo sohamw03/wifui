@@ -305,11 +305,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .iter()
             .map(|w| {
                 let is_this_connecting = connecting_ssid.is_some_and(|s| s == w.ssid.as_str());
-                let is_connected = state
-                    .network
-                    .connected_ssid
-                    .as_deref()
-                    .is_some_and(|ssid| ssid == w.ssid);
+                let is_connected = w.is_connected;
 
                 // Preserve the original row-wide coloring: saved rows are blue,
                 // connected rows are green and bold, and a connecting row is yellow.

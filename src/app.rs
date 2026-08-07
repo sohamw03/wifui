@@ -73,13 +73,18 @@ pub struct ConnectionState {
     pub connecting_to_ssid: Option<String>,
     pub target_ssid: Option<String>,
     pub connection_start_time: Option<Instant>,
-    pub connection_result_rx: Option<Receiver<Result<()>>>,
+    pub connection_result_rx: Option<Receiver<OperationResult>>,
+    pub next_operation_id: u64,
+    pub active_operation_id: Option<u64>,
+    pub active_connection_attempt_id: Option<u64>,
     #[allow(dead_code)]
     pub wifi_listener: Option<WifiListener>,
     pub listener_init_rx: Option<Receiver<crate::error::WifiResult<WifiListener>>>,
     pub connection_event_tx: Option<UnboundedSender<ConnectionEvent>>,
     pub connection_event_rx: Option<UnboundedReceiver<ConnectionEvent>>,
 }
+
+pub type OperationResult = (u64, Result<()>);
 
 impl ConnectionState {
     pub fn new() -> Self {
@@ -91,11 +96,44 @@ impl ConnectionState {
             target_ssid: None,
             connection_start_time: None,
             connection_result_rx: None,
+            next_operation_id: 0,
+            active_operation_id: None,
+            active_connection_attempt_id: None,
             wifi_listener: None,
             listener_init_rx: None,
             connection_event_tx: Some(tx),
             connection_event_rx: Some(rx),
         }
+    }
+
+    pub fn begin_operation(&mut self) -> u64 {
+        self.next_operation_id = self.next_operation_id.wrapping_add(1).max(1);
+        let operation_id = self.next_operation_id;
+        self.active_operation_id = Some(operation_id);
+        operation_id
+    }
+
+    pub fn begin_connection_attempt(&mut self, ssid: String) -> u64 {
+        let operation_id = self.begin_operation();
+        self.is_connecting = true;
+        self.target_ssid = Some(ssid);
+        self.connection_start_time = Some(Instant::now());
+        self.active_connection_attempt_id = Some(operation_id);
+        operation_id
+    }
+
+    pub fn finish_connection_attempt(&mut self) {
+        self.active_operation_id = None;
+        self.connection_result_rx = None;
+        self.is_connecting = false;
+        self.target_ssid = None;
+        self.connection_start_time = None;
+        self.active_connection_attempt_id = None;
+    }
+
+    pub fn cancel_operation(&mut self) {
+        self.active_operation_id = None;
+        self.finish_connection_attempt();
     }
 }
 

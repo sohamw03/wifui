@@ -43,6 +43,13 @@ struct SavedProfile {
     auto_connect: bool,
 }
 
+#[derive(Clone, Debug)]
+struct ActiveAccessPoint {
+    path: String,
+    ssid: String,
+    bssid: Option<String>,
+}
+
 type SettingsMap = HashMap<String, HashMap<String, OwnedValue>>;
 
 impl NetworkManagerBackend {
@@ -271,6 +278,46 @@ impl NetworkManagerBackend {
                 ssid: ssid.to_string(),
             })
     }
+
+    fn connected_access_point(
+        &self,
+        connection: &Connection,
+    ) -> WifiResult<Option<ActiveAccessPoint>> {
+        let device = self.device(connection)?;
+        let state: u32 = device.get_property("State").map_err(|e| WifiError::Dbus {
+            operation: format!("read NetworkManager connection state: {e}"),
+        })?;
+        if state != DEVICE_STATE_ACTIVATED {
+            return Ok(None);
+        }
+        let wireless = self.wireless(connection)?;
+        let active_ap: OwnedObjectPath = match wireless.get_property("ActiveAccessPoint") {
+            Ok(path) => path,
+            Err(_) => return Ok(None),
+        };
+        if active_ap.as_str() == "/" {
+            return Ok(None);
+        }
+        let path = active_ap.to_string();
+        let ap = new_proxy(
+            connection,
+            NETWORK_MANAGER_SERVICE,
+            &path,
+            NM_ACCESS_POINT_INTERFACE,
+        )?;
+        let ssid: Vec<u8> = ap.get_property("Ssid").map_err(|e| WifiError::Dbus {
+            operation: format!("read the NetworkManager connected SSID: {e}"),
+        })?;
+        let bssid = ap
+            .get_property::<String>("HwAddress")
+            .ok()
+            .and_then(|value| normalize_bssid(&value));
+        Ok(Some(ActiveAccessPoint {
+            path,
+            ssid: String::from_utf8_lossy(&ssid).into_owned(),
+            bssid,
+        }))
+    }
 }
 
 impl WifiBackend for NetworkManagerBackend {
@@ -341,43 +388,21 @@ impl WifiBackend for NetworkManagerBackend {
     }
 
     fn get_connected_ssid(&self) -> WifiResult<Option<String>> {
-        let connection = system_connection()?;
-        let device = self.device(&connection)?;
-        let state: u32 = device.get_property("State").map_err(|e| WifiError::Dbus {
-            operation: format!("read NetworkManager connection state: {e}"),
-        })?;
-        if state != DEVICE_STATE_ACTIVATED {
-            return Ok(None);
-        }
-        let wireless = self.wireless(&connection)?;
-        let active_ap: OwnedObjectPath = match wireless.get_property("ActiveAccessPoint") {
-            Ok(path) => path,
-            Err(_) => return Ok(None),
-        };
-        if active_ap.as_str() == "/" {
-            return Ok(None);
-        }
-        let ap = new_proxy(
-            &connection,
-            NETWORK_MANAGER_SERVICE,
-            active_ap.as_str(),
-            NM_ACCESS_POINT_INTERFACE,
-        )?;
-        let ssid: Vec<u8> = ap.get_property("Ssid").map_err(|e| WifiError::Dbus {
-            operation: format!("read the NetworkManager connected SSID: {e}"),
-        })?;
-        Ok(Some(String::from_utf8_lossy(&ssid).into_owned()))
+        Ok(self
+            .connected_access_point(&system_connection()?)?
+            .map(|access_point| access_point.ssid))
     }
 
     fn get_wifi_networks(&self) -> WifiResult<Vec<WifiInfo>> {
         let connection = system_connection()?;
         let saved = self.saved_profiles(&connection)?;
-        let connected = self.get_connected_ssid()?;
+        let connected = self.connected_access_point(&connection)?;
         let link_speed = self
             .wireless(&connection)?
             .get_property::<u32>("Bitrate")
             .ok()
-            .map(|rate| rate / 1000);
+            .map(|rate| rate / 1000)
+            .filter(|rate| *rate > 0);
         let wireless = self.wireless(&connection)?;
         let access_points: Vec<OwnedObjectPath> = wireless
             .call("GetAllAccessPoints", &())
@@ -403,13 +428,20 @@ impl WifiBackend for NetworkManagerBackend {
                 continue;
             }
             let ssid = String::from_utf8_lossy(&ssid_bytes).into_owned();
+            let bssid = ap
+                .get_property::<String>("HwAddress")
+                .ok()
+                .and_then(|value| normalize_bssid(&value));
             let strength: u8 = ap.get_property("Strength").unwrap_or(0);
             let frequency_mhz: u32 = ap.get_property("Frequency").unwrap_or(0);
             let flags: u32 = ap.get_property("Flags").unwrap_or(0);
             let wpa_flags: u32 = ap.get_property("WpaFlags").unwrap_or(0);
             let rsn_flags: u32 = ap.get_property("RsnFlags").unwrap_or(0);
             let (authentication, encryption) = nm_security_names(flags, wpa_flags, rsn_flags);
-            let is_connected = connected.as_deref() == Some(ssid.as_str());
+            let is_connected = connected.as_ref().is_some_and(|active| {
+                active.path == path
+                    || (active.ssid == ssid && active.bssid.is_some() && active.bssid == bssid)
+            });
             let profile = saved
                 .iter()
                 .find(|profile| nm_saved_network_matches(&profile.ssid, &ssid));
@@ -425,20 +457,29 @@ impl WifiBackend for NetworkManagerBackend {
                 channel: nm_frequency_to_channel(frequency_mhz),
                 frequency: nm_frequency_to_hz(frequency_mhz),
                 link_speed: if is_connected { link_speed } else { None },
+                bssid,
             };
             networks
                 .entry(ssid)
                 .and_modify(|current| {
-                    if info.signal > current.signal {
+                    let replace_radio = if info.is_connected != current.is_connected {
+                        info.is_connected
+                    } else {
+                        info.signal > current.signal
+                    };
+                    if replace_radio {
                         current.signal = info.signal;
                         current.channel = info.channel;
                         current.frequency = info.frequency;
+                        current.phy_type = info.phy_type.clone();
+                        current.bssid = info.bssid.clone();
                     }
                     current.is_saved |= info.is_saved;
                     current.is_connected |= info.is_connected;
                     current.auto_connect |= info.auto_connect;
-                    if info.link_speed.is_some() {
+                    if info.is_connected {
                         current.link_speed = info.link_speed;
+                        current.bssid = info.bssid.clone();
                     }
                 })
                 .or_insert(info);
@@ -546,6 +587,11 @@ impl WifiBackend for NetworkManagerBackend {
                 })?;
         Ok(extract_profile_secret(&secrets, setting_name))
     }
+}
+
+fn normalize_bssid(value: &str) -> Option<String> {
+    let value = value.trim().to_ascii_lowercase();
+    (!value.is_empty()).then_some(value)
 }
 
 fn is_wifi_profile(settings: &SettingsMap) -> bool {

@@ -37,6 +37,13 @@ struct NetworkRecord {
     auto_connect: bool,
 }
 
+#[derive(Clone, Debug, Default)]
+struct StationDiagnostics {
+    frequency_mhz: u32,
+    bssid: Option<String>,
+    link_speed: Option<u32>,
+}
+
 impl IwdBackend {
     pub(crate) fn discover(
         connection: &Connection,
@@ -227,7 +234,7 @@ impl IwdBackend {
         result
     }
 
-    fn station_diagnostics(&self, connection: &Connection) -> Option<(u32, Option<u32>)> {
+    fn station_diagnostics(&self, connection: &Connection) -> Option<StationDiagnostics> {
         let proxy = new_proxy(
             connection,
             IWD_SERVICE,
@@ -235,14 +242,19 @@ impl IwdBackend {
             "net.connman.iwd.StationDiagnostic",
         )
         .ok()?;
-        let diag: HashMap<String, OwnedValue> = proxy.call("GetDiagnostic", &()).ok()?;
+        let diag: HashMap<String, OwnedValue> = proxy
+            .call("GetDiagnostics", &())
+            .or_else(|_| proxy.call("GetDiagnostic", &()))
+            .ok()?;
         let freq_mhz = diag.get("Frequency").and_then(|v| {
             u32::try_from(v.clone())
                 .ok()
                 .or_else(|| u64::try_from(v.clone()).ok().map(|val| val as u32))
         })?;
         let link_speed = diag
-            .get("RxBitrate")
+            .get("RxRate")
+            .or_else(|| diag.get("TxRate"))
+            .or_else(|| diag.get("RxBitrate"))
             .or_else(|| diag.get("TxBitrate"))
             .and_then(|v| {
                 u32::try_from(v.clone())
@@ -250,7 +262,15 @@ impl IwdBackend {
                     .or_else(|| u64::try_from(v.clone()).ok().map(|val| val as u32))
             })
             .map(|rate_100kbps| rate_100kbps / 10);
-        Some((freq_mhz, link_speed))
+        Some(StationDiagnostics {
+            frequency_mhz: freq_mhz,
+            bssid: diag
+                .get("ConnectedBss")
+                .or_else(|| diag.get("ConnectedBSS"))
+                .and_then(value_string)
+                .and_then(|value| normalize_bssid(&value)),
+            link_speed,
+        })
     }
 }
 
@@ -366,11 +386,13 @@ impl WifiBackend for IwdBackend {
             let (authentication, encryption) = iwd_security_names(&record.network_type);
             let (phy_type, mut channel, mut frequency) = iwd_unknown_metadata();
             let mut link_speed = None;
+            let mut bssid = None;
             if record.is_connected {
-                if let Some((freq_mhz, speed)) = diagnostics {
-                    frequency = nm_frequency_to_hz(freq_mhz);
-                    channel = nm_frequency_to_channel(freq_mhz);
-                    link_speed = speed;
+                if let Some(diagnostics) = &diagnostics {
+                    frequency = nm_frequency_to_hz(diagnostics.frequency_mhz);
+                    channel = nm_frequency_to_channel(diagnostics.frequency_mhz);
+                    link_speed = diagnostics.link_speed;
+                    bssid = diagnostics.bssid.clone();
                 }
             }
             let info = WifiInfo {
@@ -385,22 +407,29 @@ impl WifiBackend for IwdBackend {
                 channel,
                 frequency,
                 link_speed,
+                bssid,
             };
             networks
                 .entry(record.ssid)
                 .and_modify(|current| {
-                    if info.signal > current.signal {
+                    let replace_radio = if info.is_connected != current.is_connected {
+                        info.is_connected
+                    } else {
+                        info.signal > current.signal
+                    };
+                    if replace_radio {
                         current.signal = info.signal;
-                        if current.channel == 0 {
-                            current.channel = info.channel;
-                            current.frequency = info.frequency;
-                        }
+                        current.channel = info.channel;
+                        current.frequency = info.frequency;
+                        current.phy_type = info.phy_type.clone();
+                        current.bssid = info.bssid.clone();
                     }
                     current.is_saved |= info.is_saved;
                     current.is_connected |= info.is_connected;
                     current.auto_connect |= info.auto_connect;
-                    if info.link_speed.is_some() {
+                    if info.is_connected {
                         current.link_speed = info.link_speed;
+                        current.bssid = info.bssid.clone();
                     }
                 })
                 .or_insert(info);
@@ -481,6 +510,11 @@ impl WifiBackend for IwdBackend {
             operation: "reading saved passwords through D-Bus".to_string(),
         })
     }
+}
+
+fn normalize_bssid(value: &str) -> Option<String> {
+    let value = value.trim().to_ascii_lowercase();
+    (!value.is_empty()).then_some(value)
 }
 
 fn managed_objects(connection: &Connection) -> WifiResult<ManagedObjects> {
