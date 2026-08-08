@@ -22,3 +22,4 @@ pub const BRIGHT_PURPLE: Color = Color::Rgb(205, 124, 84); // #CD7C54
 
 pub const DIMMED: Color = Color::Rgb(60, 60, 60); // Dark Gray for dimmed state
 pub const SELECTION_BG: Color = Color::Rgb(65, 56, 41); // #413829
+pub const HOVER_BG: Color = Color::Rgb(38, 36, 33); // subtle hover highlight for mouse hot-track

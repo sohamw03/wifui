@@ -212,6 +212,17 @@ impl RefreshState {
     }
 }
 
+/// Mouse interaction state
+#[derive(Debug, Default)]
+pub struct MouseState {
+    /// Row index inside filtered_wifi_list the cursor is currently over, if any
+    pub hovered_row: Option<usize>,
+    /// Instant and row index of the most recent left-click on a list item (double-click detection)
+    pub last_list_click: Option<(usize, Instant)>,
+    /// Scroll offset for the network list viewport (mirrors ListState::offset)
+    pub scroll_offset: usize,
+}
+
 /// Main application state
 #[derive(Debug)]
 pub struct AppState {
@@ -220,6 +231,7 @@ pub struct AppState {
     pub connection: ConnectionState,
     pub inputs: InputStates,
     pub refresh: RefreshState,
+    pub mouse: MouseState,
 }
 
 impl AppState {
@@ -231,6 +243,7 @@ impl AppState {
             connection: ConnectionState::new(),
             inputs: InputStates::new(),
             refresh: RefreshState::new(),
+            mouse: MouseState::default(),
         }
     }
 

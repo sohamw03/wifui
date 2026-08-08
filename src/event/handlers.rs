@@ -1,9 +1,10 @@
 use crate::app::AppState;
 use crate::config;
 use crate::error::WifiError;
+use crate::ui::LayoutAreas;
 use crate::wifi::{disconnect, get_connected_ssid, get_wifi_networks};
 use color_eyre::eyre::eyre;
-use crossterm::event::{self, KeyEvent, KeyModifiers};
+use crossterm::event::{self, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use secrecy::SecretString;
 use std::time::Instant;
 use tokio::sync::mpsc;
@@ -357,67 +358,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
         event::KeyCode::Char('G') | event::KeyCode::End => state.go_to_bottom(),
         event::KeyCode::Enter => {
             if let Some(selected) = state.ui.l_state.selected() {
-                if let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned() {
-                    let is_connected = wifi.is_connected;
-
-                    if is_connected {
-                        let ssid = wifi.ssid.clone();
-                        let operation_id = state.connection.begin_disconnect_attempt(ssid);
-                        let (tx, rx) = mpsc::channel(1);
-                        state.connection.connection_result_rx = Some(rx);
-                        tokio::spawn(async move {
-                            let result = tokio::task::spawn_blocking(disconnect).await;
-                            let result = match result {
-                                Ok(inner) => inner.map_err(|e: WifiError| e.into()),
-                                Err(e) => Err(eyre!(e.to_string())),
-                            };
-                            let _ = tx.send((operation_id, result)).await;
-                        });
-                    } else if wifi.authentication != "Open" {
-                        if wifi.is_saved {
-                            let ssid = wifi.ssid.clone();
-                            let operation_id =
-                                state.connection.begin_connection_attempt(ssid.clone());
-                            let (tx, rx) = mpsc::channel(1);
-                            state.connection.connection_result_rx = Some(rx);
-
-                            tokio::spawn(async move {
-                                disconnect_if_connected().await;
-                                let result = tokio::task::spawn_blocking(move || {
-                                    crate::wifi::connect_profile(&ssid)
-                                })
-                                .await;
-                                let result = match result {
-                                    Ok(inner) => inner.map_err(|e: WifiError| e.into()),
-                                    Err(e) => Err(eyre!(e.to_string())),
-                                };
-                                let _ = tx.send((operation_id, result)).await;
-                            });
-                        } else {
-                            state.ui.show_password_popup = true;
-                            state.inputs.password_input.clear();
-                            state.connection.pending_password_ssid = Some(wifi.ssid.clone());
-                        }
-                    } else {
-                        let ssid = wifi.ssid.clone();
-                        let operation_id = state.connection.begin_connection_attempt(ssid.clone());
-                        let (tx, rx) = mpsc::channel(1);
-                        state.connection.connection_result_rx = Some(rx);
-
-                        tokio::spawn(async move {
-                            disconnect_if_connected().await;
-                            let result = tokio::task::spawn_blocking(move || {
-                                crate::wifi::connect_open(&ssid, false)
-                            })
-                            .await;
-                            let result = match result {
-                                Ok(inner) => inner.map_err(|e: WifiError| e.into()),
-                                Err(e) => Err(eyre!(e.to_string())),
-                            };
-                            let _ = tx.send((operation_id, result)).await;
-                        });
-                    }
-                }
+                connect_selected(state, selected);
             }
         }
         event::KeyCode::Char('r') => {
@@ -594,6 +535,259 @@ fn escape_special_chars(s: &str) -> String {
         .replace(':', "\\:")
 }
 
+// ─── Mouse helpers ────────────────────────────────────────────────────────────
+
+/// Returns true if terminal cell (col, row) falls inside the given Rect.
+#[inline]
+fn contains(rect: ratatui::layout::Rect, col: u16, row: u16) -> bool {
+    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+}
+
+/// Returns the index into `filtered_wifi_list` that the cursor is currently over,
+/// accounting for the current scroll offset and list border.
+fn row_under_cursor(col: u16, row: u16, state: &AppState, areas: &LayoutAreas) -> Option<usize> {
+    let list = areas.list_area;
+    // list_area includes the rounded border; inner content starts one cell inside
+    if col < list.x + 1 || col >= list.x + list.width.saturating_sub(1) {
+        return None;
+    }
+    if row < list.y + 1 || row >= list.y + list.height.saturating_sub(1) {
+        return None;
+    }
+    let relative_row = (row - list.y - 1) as usize;
+    let actual_index = state.mouse.scroll_offset + relative_row;
+    if actual_index < state.network.filtered_wifi_list.len() {
+        Some(actual_index)
+    } else {
+        None
+    }
+}
+
+/// Shared logic for "activate the currently selected network" — called by both
+/// the keyboard Enter handler and mouse double-click.
+fn connect_selected(state: &mut AppState, selected: usize) {
+    if let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned() {
+        let is_connected = wifi.is_connected;
+
+        if is_connected {
+            let ssid = wifi.ssid.clone();
+            let operation_id = state.connection.begin_disconnect_attempt(ssid);
+            let (tx, rx) = mpsc::channel(1);
+            state.connection.connection_result_rx = Some(rx);
+            tokio::spawn(async move {
+                let result = tokio::task::spawn_blocking(disconnect).await;
+                let result = match result {
+                    Ok(inner) => inner.map_err(|e: WifiError| e.into()),
+                    Err(e) => Err(eyre!(e.to_string())),
+                };
+                let _ = tx.send((operation_id, result)).await;
+            });
+        } else if wifi.authentication != "Open" {
+            if wifi.is_saved {
+                let ssid = wifi.ssid.clone();
+                let operation_id = state.connection.begin_connection_attempt(ssid.clone());
+                let (tx, rx) = mpsc::channel(1);
+                state.connection.connection_result_rx = Some(rx);
+                tokio::spawn(async move {
+                    disconnect_if_connected().await;
+                    let result =
+                        tokio::task::spawn_blocking(move || crate::wifi::connect_profile(&ssid))
+                            .await;
+                    let result = match result {
+                        Ok(inner) => inner.map_err(|e: WifiError| e.into()),
+                        Err(e) => Err(eyre!(e.to_string())),
+                    };
+                    let _ = tx.send((operation_id, result)).await;
+                });
+            } else {
+                state.ui.show_password_popup = true;
+                state.inputs.password_input.clear();
+                state.connection.pending_password_ssid = Some(wifi.ssid.clone());
+            }
+        } else {
+            let ssid = wifi.ssid.clone();
+            let operation_id = state.connection.begin_connection_attempt(ssid.clone());
+            let (tx, rx) = mpsc::channel(1);
+            state.connection.connection_result_rx = Some(rx);
+            tokio::spawn(async move {
+                disconnect_if_connected().await;
+                let result =
+                    tokio::task::spawn_blocking(move || crate::wifi::connect_open(&ssid, false))
+                        .await;
+                let result = match result {
+                    Ok(inner) => inner.map_err(|e: WifiError| e.into()),
+                    Err(e) => Err(eyre!(e.to_string())),
+                };
+                let _ = tx.send((operation_id, result)).await;
+            });
+        }
+    }
+}
+
+/// Attempt to connect the network in the manual-add popup's Connect button slot.
+/// Mirrors the `Enter` branch for `manual_input_field == 4` in `handle_manual_add_popup`.
+fn trigger_manual_connect(state: &mut AppState) {
+    if !state.inputs.manual_ssid_input.value.is_empty() {
+        let ssid = state.inputs.manual_ssid_input.value.clone();
+        let operation_id = state.connection.begin_connection_attempt(ssid.clone());
+        let password = SecretString::from(state.inputs.manual_password_input.value.clone());
+        let security = state.inputs.manual_security.clone();
+        let hidden = state.inputs.manual_hidden;
+
+        let (tx, rx) = mpsc::channel(1);
+        state.connection.connection_result_rx = Some(rx);
+
+        tokio::spawn(async move {
+            disconnect_if_connected().await;
+            let result = tokio::task::spawn_blocking(move || {
+                if security == "Open" {
+                    crate::wifi::connect_open(&ssid, hidden)
+                } else {
+                    let (auth, cipher) = match security.as_str() {
+                        "WPA3-Personal" => ("WPA3-SAE", "AES"),
+                        "WPA2-Personal" => ("WPA2-PSK", "AES"),
+                        "WPA-Personal" => ("WPA-PSK", "AES"),
+                        "WEP" => ("Shared", "WEP"),
+                        _ => ("WPA2-PSK", "AES"),
+                    };
+                    crate::wifi::connect_with_password(&ssid, &password, auth, cipher, hidden)
+                }
+            })
+            .await
+            .unwrap_or_else(|e| Err(WifiError::Internal(e.to_string())));
+            let _ = tx
+                .send((operation_id, result.map_err(|e: WifiError| e.into())))
+                .await;
+        });
+
+        state.ui.show_manual_add_popup = false;
+        state.inputs.clear_manual();
+    }
+}
+
+/// Handle all mouse events for the TUI.
+pub fn handle_mouse(mouse: MouseEvent, state: &mut AppState, areas: &LayoutAreas) {
+    let col = mouse.column;
+    let row = mouse.row;
+
+    match mouse.kind {
+        // ── Scroll wheel ──────────────────────────────────────────────────────
+        MouseEventKind::ScrollUp => {
+            state.mouse.scroll_offset = state.mouse.scroll_offset.saturating_sub(1);
+            *state.ui.l_state.offset_mut() = state.mouse.scroll_offset;
+        }
+        MouseEventKind::ScrollDown => {
+            let list_height = areas.list_area.height.saturating_sub(2) as usize;
+            let max_offset = state
+                .network
+                .filtered_wifi_list
+                .len()
+                .saturating_sub(list_height);
+            if state.mouse.scroll_offset < max_offset {
+                state.mouse.scroll_offset += 1;
+            }
+            *state.ui.l_state.offset_mut() = state.mouse.scroll_offset;
+        }
+
+        // ── Mouse move — hot-track ────────────────────────────────────────────
+        MouseEventKind::Moved => {
+            if !state.is_popup_open() {
+                let new_hover = row_under_cursor(col, row, state, areas);
+                state.mouse.hovered_row = new_hover;
+            } else {
+                state.mouse.hovered_row = None;
+            }
+        }
+
+        // ── Left button press ─────────────────────────────────────────────────
+        MouseEventKind::Down(MouseButton::Left) => {
+            // Always dismiss the error message on any click
+            if state.ui.error_message.is_some() {
+                state.ui.error_message = None;
+            }
+
+            // --- QR popup: click-away to dismiss ---
+            if state.ui.show_qr_popup {
+                if let Some(qr_area) = areas.qr_popup_area {
+                    if !contains(qr_area, col, row) {
+                        state.ui.show_qr_popup = false;
+                        state.ui.qr_code_lines.clear();
+                    }
+                }
+                return;
+            }
+
+            // --- Manual-add popup ---
+            if state.ui.show_manual_add_popup {
+                if let Some(popup_area) = areas.manual_popup_area {
+                    if !contains(popup_area, col, row) {
+                        // Click outside — dismiss
+                        state.ui.show_manual_add_popup = false;
+                        state.inputs.clear_manual();
+                        return;
+                    }
+                }
+                // Click inside the popup: hit-test connect button first
+                if let Some(btn) = areas.manual_connect_area {
+                    if contains(btn, col, row) {
+                        trigger_manual_connect(state);
+                        return;
+                    }
+                }
+                // Hit-test individual fields (SSID=0, Password=1, Security=2, Hidden=3)
+                for (i, field_area) in areas.manual_field_areas.iter().enumerate() {
+                    if let Some(area) = field_area {
+                        if contains(*area, col, row) {
+                            state.inputs.manual_input_field = i;
+                            return;
+                        }
+                    }
+                }
+                return;
+            }
+
+            // --- Password popup: click-away to dismiss ---
+            if state.ui.show_password_popup {
+                if let Some(pw_area) = areas.password_popup_area {
+                    if !contains(pw_area, col, row) {
+                        state.ui.show_password_popup = false;
+                        state.inputs.password_input.clear();
+                    }
+                }
+                return;
+            }
+
+            // --- Main view: click on a list item ---
+            if let Some(clicked_idx) = row_under_cursor(col, row, state, areas) {
+                let is_double = state
+                    .mouse
+                    .last_list_click
+                    .as_ref()
+                    .map(|(prev_row, t)| {
+                        *prev_row == clicked_idx
+                            && t.elapsed()
+                                < std::time::Duration::from_millis(config::DOUBLE_CLICK_MS)
+                    })
+                    .unwrap_or(false);
+
+                if is_double {
+                    // Double-click: select + activate (same as Enter)
+                    state.ui.l_state.select(Some(clicked_idx));
+                    state.mouse.last_list_click = None; // reset so triple-click doesn't re-fire
+                    connect_selected(state, clicked_idx);
+                } else {
+                    // Single click: select only
+                    state.ui.l_state.select(Some(clicked_idx));
+                    state.mouse.last_list_click = Some((clicked_idx, Instant::now()));
+                }
+            }
+        }
+
+        // Right-click and any other events are intentionally ignored
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -613,5 +807,27 @@ mod tests {
             escape_special_chars(r#"a;b,c:d"e\f"#),
             r#"a\;b\,c\:d\"e\\f"#
         );
+    }
+}
+
+#[cfg(test)]
+mod mouse_tests {
+    use super::*;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn contains_identifies_interior_cells() {
+        let rect = Rect::new(5, 5, 10, 5); // x=5..14, y=5..9
+        assert!(contains(rect, 5, 5));
+        assert!(contains(rect, 14, 9));
+        assert!(!contains(rect, 4, 5));
+        assert!(!contains(rect, 15, 5));
+        assert!(!contains(rect, 5, 10));
+    }
+
+    #[test]
+    fn contains_zero_size_rect_never_matches() {
+        let rect = Rect::new(0, 0, 0, 0);
+        assert!(!contains(rect, 0, 0));
     }
 }

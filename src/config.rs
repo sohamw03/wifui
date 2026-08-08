@@ -20,6 +20,9 @@ pub const INTERACTION_COOLDOWN_SECS: u64 = 1;
 pub const EVENT_POLL_MS: u64 = 100;
 pub const MANUAL_REFRESH_DEBOUNCE_MS: u64 = 500;
 
+// Mouse
+pub const DOUBLE_CLICK_MS: u64 = 400;
+
 // Refresh burst counts
 pub const STARTUP_REFRESH_BURST: u8 = 5;
 pub const CONNECTION_REFRESH_BURST: u8 = 15;

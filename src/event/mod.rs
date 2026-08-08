@@ -1,6 +1,6 @@
 //! Event handling module for WifUI
 //!
-//! This module handles keyboard input, connection events, and the main event loop.
+//! This module handles keyboard input, mouse input, connection events, and the main event loop.
 
 mod handlers;
 
@@ -8,7 +8,7 @@ use crate::{
     app::AppState,
     config,
     error::WifiError,
-    ui::render,
+    ui::{LayoutAreas, render},
     wifi::{
         ConnectionEvent, get_connected_ssid, get_wifi_networks, is_backend_available,
         start_wifi_listener,
@@ -17,11 +17,11 @@ use crate::{
 use color_eyre::eyre::{Result, eyre};
 use crossterm::{
     cursor::SetCursorStyle,
-    event::{self, Event, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyModifiers},
 };
 use handlers::{
-    handle_main_view, handle_manual_add_popup, handle_password_popup, handle_qr_popup,
-    handle_search_mode,
+    handle_main_view, handle_manual_add_popup, handle_mouse, handle_password_popup,
+    handle_qr_popup, handle_search_mode,
 };
 use ratatui::DefaultTerminal;
 use std::time::{Duration, Instant};
@@ -56,6 +56,7 @@ fn start_network_refresh(state: &mut AppState) {
 impl Drop for CursorStyleGuard {
     fn drop(&mut self) {
         let _ = crossterm::execute!(std::io::stdout(), SetCursorStyle::DefaultUserShape);
+        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     }
 }
 
@@ -65,11 +66,18 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
 
     // Set cursor style to blinking block while the app is active.
     crossterm::execute!(std::io::stdout(), SetCursorStyle::BlinkingBlock)?;
+    // Enable mouse capture so we receive mouse move / click / scroll events.
+    crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
 
     let mut listener_init_started = false;
 
+    // Track the layout areas computed by the last rendered frame for mouse hit-testing.
+    let mut layout_areas = LayoutAreas::default();
+
     loop {
-        terminal.draw(|frame| render(frame, state))?;
+        terminal.draw(|frame| {
+            layout_areas = render(frame, state);
+        })?;
 
         // Start WiFi event listener only after the first frame is rendered.
         if !listener_init_started {
@@ -344,9 +352,9 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
         }
 
         if event::poll(Duration::from_millis(config::EVENT_POLL_MS))? {
-            if let Event::Key(key) = event::read()? {
-                state.refresh.last_interaction = Instant::now();
-                if key.kind == event::KeyEventKind::Press {
+            match event::read()? {
+                Event::Key(key) if key.kind == event::KeyEventKind::Press => {
+                    state.refresh.last_interaction = Instant::now();
                     // Log key press if enabled
                     if state.ui.show_key_logger
                         && !state.ui.show_password_popup
@@ -416,6 +424,11 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                         break;
                     }
                 }
+                Event::Mouse(mouse) => {
+                    state.refresh.last_interaction = Instant::now();
+                    handle_mouse(mouse, state, &layout_areas);
+                }
+                _ => {}
             }
         }
     }

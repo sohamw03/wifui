@@ -9,6 +9,25 @@ use ratatui::{
     },
 };
 
+/// Bounding boxes of all interactive areas returned by render(), used by mouse hit-testing.
+#[derive(Debug, Clone, Default)]
+pub struct LayoutAreas {
+    /// Inner area of the network list (excluding border)
+    pub list_area: Rect,
+    /// Outer area of the error panel, if visible
+    pub error_area: Option<Rect>,
+    /// Outer area of the password popup, if visible
+    pub password_popup_area: Option<Rect>,
+    /// Outer area of the QR popup, if visible
+    pub qr_popup_area: Option<Rect>,
+    /// Outer area of the manual-add popup, if visible
+    pub manual_popup_area: Option<Rect>,
+    /// Per-field bounding boxes inside the manual-add popup (SSID=0, Password=1, Security=2, Hidden=3)
+    pub manual_field_areas: [Option<Rect>; 4],
+    /// Bounding box of the Connect button inside the manual-add popup
+    pub manual_connect_area: Option<Rect>,
+}
+
 fn display_auth_name(auth: &str) -> &str {
     match auth {
         "Open" => "Open",
@@ -26,7 +45,8 @@ fn display_auth_name(auth: &str) -> &str {
     }
 }
 
-pub fn render(frame: &mut Frame, state: &mut AppState) {
+pub fn render(frame: &mut Frame, state: &mut AppState) -> LayoutAreas {
+    let mut areas = LayoutAreas::default();
     let area = frame.area();
     let is_dimmed = state.is_popup_open();
     let icons = &state.ui.icon_set;
@@ -321,7 +341,8 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .network
             .filtered_wifi_list
             .iter()
-            .map(|w| {
+            .enumerate()
+            .map(|(index, w)| {
                 let is_this_connecting = connecting_ssid.is_some_and(|s| s == w.ssid.as_str());
                 let is_this_disconnecting =
                     disconnecting_ssid.is_some_and(|s| s == w.ssid.as_str());
@@ -335,6 +356,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
                 // Preserve the original row-wide coloring: saved rows are blue,
                 // connected rows are green and bold, connecting is yellow, and disconnecting is orange.
+                // Mouse hover gets a subtle background when nothing else overrides.
                 let row_style = if is_dimmed {
                     if is_connected {
                         Style::default()
@@ -357,6 +379,8 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                         .add_modifier(Modifier::BOLD)
                 } else if w.is_saved {
                     Style::default().fg(theme::BLUE)
+                } else if state.mouse.hovered_row == Some(index) {
+                    Style::default().bg(theme::HOVER_BG)
                 } else {
                     Style::default()
                 };
@@ -456,6 +480,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             );
 
         frame.render_stateful_widget(list, list_area, &mut state.ui.l_state);
+        areas.list_area = list_area;
 
         let viewport_height = list_area.height.saturating_sub(2) as usize;
         let content_len = state.network.filtered_wifi_list.len();
@@ -737,6 +762,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
     if let Some(error) = &state.ui.error_message {
         let error_area = Rect::new(area.x + 2, area.height - 4, area.width - 4, 3);
+        areas.error_area = Some(error_area);
         let error_paragraph = Paragraph::new(error.as_str())
             .block(
                 Block::default()
@@ -760,6 +786,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             width: networks_area.width,
             height: popup_height,
         };
+        areas.password_popup_area = Some(popup_area);
 
         let popup_text: String = state
             .inputs
@@ -841,6 +868,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             width: networks_area.width,
             height: popup_height,
         };
+        areas.manual_popup_area = Some(popup_area);
 
         frame.render_widget(Clear, popup_area);
 
@@ -865,6 +893,11 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             Constraint::Length(1), // Hidden + Connect
         ])
         .split(inner);
+
+        // Capture field areas for mouse hit-testing
+        areas.manual_field_areas[0] = Some(layout[0]);
+        areas.manual_field_areas[1] = Some(layout[1]);
+        areas.manual_field_areas[2] = Some(layout[2]);
 
         // SSID Input
         let ssid_style = if state.inputs.manual_input_field == 0 {
@@ -1023,6 +1056,10 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         let bottom_layout =
             Layout::horizontal([Constraint::Min(20), Constraint::Length(15)]).split(layout[4]);
 
+        // Capture hidden checkbox and connect button areas for mouse hit-testing
+        areas.manual_field_areas[3] = Some(bottom_layout[0]);
+        areas.manual_connect_area = Some(bottom_layout[1]);
+
         // Hidden Checkbox
         let hidden_style = if state.inputs.manual_input_field == 3 {
             Style::default().fg(theme::YELLOW)
@@ -1107,6 +1144,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             qr_width.min(area.width),
             qr_height.min(area.height),
         );
+        areas.qr_popup_area = Some(qr_area);
 
         // Clear background
         frame.render_widget(Clear, qr_area);
@@ -1150,4 +1188,5 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             frame.render_widget(help_text, help_area);
         }
     }
+    areas
 }
