@@ -88,21 +88,34 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
 
     let border_style = Style::default().fg(theme::DIMMED);
 
-    let title_style = Style::default()
-        .fg(theme::CYAN)
-        .add_modifier(Modifier::BOLD);
+    let title_style = if is_dimmed {
+        Style::default()
+            .fg(theme::DIMMED)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(theme::CYAN)
+            .add_modifier(Modifier::BOLD)
+    };
 
     let main_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(border_style)
-        .title(format!(
-            " WIFUI v{} • {} ",
-            env!("CARGO_PKG_VERSION"),
-            crate::wifi::backend_name()
-        ))
-        .title_alignment(Alignment::Center)
-        .title_style(title_style);
+        .title_top(
+            Line::from(Span::styled(
+                format!(" WIFUI v{} ", env!("CARGO_PKG_VERSION")),
+                title_style,
+            ))
+            .centered(),
+        )
+        .title_bottom(
+            Line::from(Span::styled(
+                format!(" {} ", crate::wifi::backend_name()),
+                border_style,
+            ))
+            .right_aligned(),
+        );
 
     frame.render_widget(main_block, main_area);
 
@@ -298,6 +311,11 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         } else {
             None
         };
+        let disconnecting_ssid = if state.connection.is_disconnecting {
+            state.connection.disconnecting_ssid.as_deref()
+        } else {
+            None
+        };
 
         let list_items: Vec<ListItem> = state
             .network
@@ -305,10 +323,18 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
             .iter()
             .map(|w| {
                 let is_this_connecting = connecting_ssid.is_some_and(|s| s == w.ssid.as_str());
-                let is_connected = w.is_connected;
+                let is_this_disconnecting =
+                    disconnecting_ssid.is_some_and(|s| s == w.ssid.as_str());
+                let is_connected = (w.is_connected
+                    || state
+                        .network
+                        .connected_ssid
+                        .as_deref()
+                        .is_some_and(|ssid| ssid == w.ssid))
+                    && !is_this_disconnecting;
 
                 // Preserve the original row-wide coloring: saved rows are blue,
-                // connected rows are green and bold, and a connecting row is yellow.
+                // connected rows are green and bold, connecting is yellow, and disconnecting is orange.
                 let row_style = if is_dimmed {
                     if is_connected {
                         Style::default()
@@ -321,6 +347,10 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                     Style::default()
                         .fg(theme::YELLOW)
                         .add_modifier(Modifier::BOLD)
+                } else if is_this_disconnecting {
+                    Style::default()
+                        .fg(theme::PURPLE)
+                        .add_modifier(Modifier::BOLD)
                 } else if is_connected {
                     Style::default()
                         .fg(theme::GREEN)
@@ -331,8 +361,8 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                     Style::default()
                 };
 
-                // Prefix: spinner while connecting, otherwise the usual icon
-                let prefix_text = if is_this_connecting {
+                // Prefix: spinner while connecting/disconnecting, otherwise the usual icon
+                let prefix_text = if is_this_connecting || is_this_disconnecting {
                     spinner_char
                 } else if w.is_saved {
                     icons.saved()
@@ -345,7 +375,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 let mut spans = vec![
                     Span::styled(prefix_text, row_style),
                     // Spinner char has no trailing space; icons do — add one to keep width stable
-                    if is_this_connecting {
+                    if is_this_connecting || is_this_disconnecting {
                         Span::raw(" ")
                     } else {
                         Span::raw("")
@@ -360,9 +390,11 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                     spans.push(Span::styled(icons.connected(), row_style));
                 }
 
-                // Suffix: "connecting..." while connecting, otherwise the auto-connect bell
+                // Suffix: "connecting..." / "disconnecting...", otherwise auto-connect status
                 if is_this_connecting {
                     spans.push(Span::styled(" connecting...", row_style));
+                } else if is_this_disconnecting {
+                    spans.push(Span::styled(" disconnecting...", row_style));
                 } else if w.is_saved {
                     if w.auto_connect {
                         spans.push(Span::styled(format!(" {}", icons.auto_on()), row_style));
@@ -396,14 +428,7 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
                 config::LOADING_CHARS[state.ui.loading_frame % config::LOADING_CHARS.len()];
             Line::from(vec![
                 Span::styled(" Networks ", list_title_style),
-                Span::styled(
-                    spinner_char,
-                    if is_dimmed {
-                        Style::default().fg(theme::DIMMED)
-                    } else {
-                        Style::default().fg(theme::CYAN)
-                    },
-                ),
+                Span::styled(spinner_char, list_title_style),
                 Span::raw(" "),
             ])
         } else {
@@ -786,7 +811,11 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         let popup_block = Block::default()
             .title(format!(
                 " Password for {} ",
-                state.connection.connecting_to_ssid.as_deref().unwrap_or("")
+                state
+                    .connection
+                    .pending_password_ssid
+                    .as_deref()
+                    .unwrap_or("")
             ))
             .title_alignment(Alignment::Left)
             .borders(Borders::ALL)

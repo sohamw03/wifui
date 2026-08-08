@@ -322,7 +322,7 @@ impl NetworkManagerBackend {
 
 impl WifiBackend for NetworkManagerBackend {
     fn name(&self) -> &'static str {
-        "NetworkManager"
+        "nm"
     }
 
     fn listener_spec(&self) -> ListenerSpec {
@@ -845,5 +845,14 @@ mod tests {
         let password =
             extract_profile_secret(&secrets, "802-11-wireless-security").expect("saved password");
         assert_eq!(password.expose_secret(), "secret");
+    }
+
+    #[test]
+    fn normalizes_bssid_string() {
+        assert_eq!(
+            normalize_bssid(" 00:11:22:AA:BB:CC "),
+            Some("00:11:22:aa:bb:cc".to_string())
+        );
+        assert_eq!(normalize_bssid("   "), None);
     }
 }

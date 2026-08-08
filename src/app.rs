@@ -70,8 +70,10 @@ impl UiState {
 #[derive(Debug)]
 pub struct ConnectionState {
     pub is_connecting: bool,
-    pub connecting_to_ssid: Option<String>,
+    pub pending_password_ssid: Option<String>,
     pub target_ssid: Option<String>,
+    pub is_disconnecting: bool,
+    pub disconnecting_ssid: Option<String>,
     pub connection_start_time: Option<Instant>,
     pub connection_result_rx: Option<Receiver<OperationResult>>,
     pub next_operation_id: u64,
@@ -92,8 +94,10 @@ impl ConnectionState {
 
         Self {
             is_connecting: false,
-            connecting_to_ssid: None,
+            pending_password_ssid: None,
             target_ssid: None,
+            is_disconnecting: false,
+            disconnecting_ssid: None,
             connection_start_time: None,
             connection_result_rx: None,
             next_operation_id: 0,
@@ -120,6 +124,19 @@ impl ConnectionState {
         self.connection_start_time = Some(Instant::now());
         self.active_connection_attempt_id = Some(operation_id);
         operation_id
+    }
+
+    pub fn begin_disconnect_attempt(&mut self, ssid: String) -> u64 {
+        let operation_id = self.begin_operation();
+        self.is_disconnecting = true;
+        self.disconnecting_ssid = Some(ssid);
+        self.connection_start_time = Some(Instant::now());
+        operation_id
+    }
+
+    pub fn finish_disconnect_attempt(&mut self) {
+        self.is_disconnecting = false;
+        self.disconnecting_ssid = None;
     }
 
     pub fn finish_connection_attempt(&mut self) {

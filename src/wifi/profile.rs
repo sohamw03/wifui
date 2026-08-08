@@ -126,6 +126,7 @@ pub fn is_profile_auto_connect(
 }
 
 /// Get list of saved WiFi profile names
+#[allow(dead_code)]
 pub fn get_saved_profiles() -> WifiResult<Vec<String>> {
     let handle = WlanHandle::open()?;
     let guid = handle.get_interface_guid()?;

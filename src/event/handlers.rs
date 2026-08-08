@@ -18,6 +18,14 @@ async fn disconnect_if_connected() {
     }
 }
 
+const MANUAL_SECURITY_OPTIONS: [&str; 5] = [
+    "WPA2-Personal",
+    "WPA3-Personal",
+    "Open",
+    "WPA-Personal",
+    "WEP",
+];
+
 /// Handle keyboard events for the QR code popup
 pub fn handle_qr_popup(key: KeyEvent, state: &mut AppState) -> bool {
     match key.code {
@@ -119,29 +127,24 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
                 1 => state.inputs.manual_password_input.insert(c),
                 2 => {
                     // Handle h/j/k/l for Security field
-                    let options = [
-                        "WPA2-Personal",
-                        "WPA3-Personal",
-                        "Open",
-                        "WPA-Personal",
-                        "WEP",
-                    ];
-                    let current_idx = options
+                    let current_idx = MANUAL_SECURITY_OPTIONS
                         .iter()
                         .position(|&s| s == state.inputs.manual_security)
                         .unwrap_or(0);
                     match c {
                         'h' | 'k' => {
                             let next_idx = if current_idx == 0 {
-                                options.len() - 1
+                                MANUAL_SECURITY_OPTIONS.len() - 1
                             } else {
                                 current_idx - 1
                             };
-                            state.inputs.manual_security = options[next_idx].to_string();
+                            state.inputs.manual_security =
+                                MANUAL_SECURITY_OPTIONS[next_idx].to_string();
                         }
                         'l' | 'j' => {
-                            let next_idx = (current_idx + 1) % options.len();
-                            state.inputs.manual_security = options[next_idx].to_string();
+                            let next_idx = (current_idx + 1) % MANUAL_SECURITY_OPTIONS.len();
+                            state.inputs.manual_security =
+                                MANUAL_SECURITY_OPTIONS[next_idx].to_string();
                         }
                         _ => {}
                     }
@@ -180,23 +183,16 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
             0 => state.inputs.manual_ssid_input.move_left(),
             1 => state.inputs.manual_password_input.move_left(),
             2 => {
-                let options = [
-                    "WPA2-Personal",
-                    "WPA3-Personal",
-                    "Open",
-                    "WPA-Personal",
-                    "WEP",
-                ];
-                let current_idx = options
+                let current_idx = MANUAL_SECURITY_OPTIONS
                     .iter()
                     .position(|&s| s == state.inputs.manual_security)
                     .unwrap_or(0);
                 let next_idx = if current_idx == 0 {
-                    options.len() - 1
+                    MANUAL_SECURITY_OPTIONS.len() - 1
                 } else {
                     current_idx - 1
                 };
-                state.inputs.manual_security = options[next_idx].to_string();
+                state.inputs.manual_security = MANUAL_SECURITY_OPTIONS[next_idx].to_string();
             }
             _ => {}
         },
@@ -215,19 +211,12 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
             0 => state.inputs.manual_ssid_input.move_right(),
             1 => state.inputs.manual_password_input.move_right(),
             2 => {
-                let options = [
-                    "WPA2-Personal",
-                    "WPA3-Personal",
-                    "Open",
-                    "WPA-Personal",
-                    "WEP",
-                ];
-                let current_idx = options
+                let current_idx = MANUAL_SECURITY_OPTIONS
                     .iter()
                     .position(|&s| s == state.inputs.manual_security)
                     .unwrap_or(0);
-                let next_idx = (current_idx + 1) % options.len();
-                state.inputs.manual_security = options[next_idx].to_string();
+                let next_idx = (current_idx + 1) % MANUAL_SECURITY_OPTIONS.len();
+                state.inputs.manual_security = MANUAL_SECURITY_OPTIONS[next_idx].to_string();
             }
             _ => {}
         },
@@ -250,7 +239,7 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
 pub fn handle_password_popup(key: KeyEvent, state: &mut AppState) -> bool {
     match key.code {
         event::KeyCode::Enter => {
-            if let Some(ssid) = state.connection.connecting_to_ssid.take() {
+            if let Some(ssid) = state.connection.pending_password_ssid.take() {
                 let operation_id = state.connection.begin_connection_attempt(ssid.clone());
                 let password = SecretString::from(state.inputs.password_input.value.clone());
                 let (tx, rx) = mpsc::channel(1);
@@ -372,7 +361,8 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                     let is_connected = wifi.is_connected;
 
                     if is_connected {
-                        let operation_id = state.connection.begin_operation();
+                        let ssid = wifi.ssid.clone();
+                        let operation_id = state.connection.begin_disconnect_attempt(ssid);
                         let (tx, rx) = mpsc::channel(1);
                         state.connection.connection_result_rx = Some(rx);
                         tokio::spawn(async move {
@@ -405,8 +395,8 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                             });
                         } else {
                             state.ui.show_password_popup = true;
-                            state.inputs.password_input.cursor = 0;
-                            state.connection.connecting_to_ssid = Some(wifi.ssid.clone());
+                            state.inputs.password_input.clear();
+                            state.connection.pending_password_ssid = Some(wifi.ssid.clone());
                         }
                     } else {
                         let ssid = wifi.ssid.clone();
@@ -598,6 +588,7 @@ fn qr_auth_type(auth: &str) -> Option<&'static str> {
 /// Escape special characters for WiFi QR code format
 fn escape_special_chars(s: &str) -> String {
     s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
         .replace(';', "\\;")
         .replace(',', "\\,")
         .replace(':', "\\:")
@@ -618,6 +609,9 @@ mod tests {
 
     #[test]
     fn qr_escapes_wifi_special_characters() {
-        assert_eq!(escape_special_chars(r"a;b,c:d\\e"), r"a\;b\,c\:d\\\\e");
+        assert_eq!(
+            escape_special_chars(r#"a;b,c:d"e\f"#),
+            r#"a\;b\,c\:d\"e\\f"#
+        );
     }
 }

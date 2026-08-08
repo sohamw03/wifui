@@ -30,6 +30,7 @@ pub use connection::{
 #[cfg(windows)]
 pub use listener::{WifiListener, start_wifi_listener};
 #[cfg(windows)]
+#[allow(unused_imports)]
 pub use profile::{forget_network, get_saved_profiles, get_wifi_password, set_auto_connect};
 #[cfg(windows)]
 pub use scanning::scan_networks;
@@ -82,7 +83,7 @@ pub fn backend_name() -> String {
 
     #[cfg(windows)]
     {
-        "Windows WLAN API".to_string()
+        "wlan".to_string()
     }
 }
 

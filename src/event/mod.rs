@@ -214,23 +214,34 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
         for event in connection_events {
             match event {
                 ConnectionEvent::Connected(ssid) => {
-                    if state.connection.active_connection_attempt_id.is_some()
-                        && let Some(target) = &state.connection.target_ssid
-                        && *target == ssid
-                    {
-                        state.connection.finish_connection_attempt();
-                        state.refresh.refresh_burst = config::DISCONNECT_REFRESH_BURST;
+                    state.network.connected_ssid = Some(ssid.clone());
+                    for w in &mut state.network.wifi_list {
+                        w.is_connected = w.ssid == ssid;
                     }
+                    state.update_filtered_list();
+                    if state.connection.is_connecting {
+                        state.connection.finish_connection_attempt();
+                    }
+                    state.refresh.refresh_burst = config::DISCONNECT_REFRESH_BURST;
                 }
                 ConnectionEvent::Disconnected => {
+                    state.connection.finish_disconnect_attempt();
+                    state.network.connected_ssid = None;
+                    for w in &mut state.network.wifi_list {
+                        w.is_connected = false;
+                    }
+                    state.update_filtered_list();
                     state.refresh.refresh_burst = config::DISCONNECT_REFRESH_BURST;
                 }
                 ConnectionEvent::Failed {
                     ssid, reason_str, ..
                 } => {
-                    if state.connection.active_connection_attempt_id.is_some()
-                        && let Some(target) = &state.connection.target_ssid
-                        && *target == ssid
+                    if state.connection.is_connecting
+                        && state
+                            .connection
+                            .target_ssid
+                            .as_deref()
+                            .is_some_and(|target| target == ssid)
                     {
                         state.connection.finish_connection_attempt();
                         state.ui.error_message = Some(format!("Connection failed: {}", reason_str));
@@ -239,15 +250,30 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
             }
         }
 
-        // Check if connected to target SSID
-        if state.connection.is_connecting {
+        // Advance loading animation frame for active operations
+        if state.connection.is_connecting
+            || state.connection.is_disconnecting
+            || state.refresh.is_initial_loading
+            || state.refresh.is_refreshing_networks
+        {
             state.ui.loading_frame = state.ui.loading_frame.wrapping_add(1);
+        }
 
+        if state.connection.is_connecting {
             if let Some(target) = &state.connection.target_ssid {
-                if let Some(connected) = &state.network.connected_ssid {
-                    if connected == target {
-                        state.connection.finish_connection_attempt();
-                    }
+                let is_target_connected = state
+                    .network
+                    .connected_ssid
+                    .as_deref()
+                    .is_some_and(|conn| conn == target)
+                    || state
+                        .network
+                        .filtered_wifi_list
+                        .iter()
+                        .any(|w| w.ssid == *target && w.is_connected);
+
+                if is_target_connected {
+                    state.connection.finish_connection_attempt();
                 }
 
                 // Check for timeout
@@ -263,6 +289,33 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                 if state.connection.connection_result_rx.is_none() {
                     state.connection.finish_connection_attempt();
                 }
+            }
+        }
+
+        if state.connection.is_disconnecting {
+            if let Some(target) = &state.connection.disconnecting_ssid {
+                let is_still_connected = state
+                    .network
+                    .connected_ssid
+                    .as_deref()
+                    .is_some_and(|conn| conn == target)
+                    || state
+                        .network
+                        .filtered_wifi_list
+                        .iter()
+                        .any(|w| w.ssid == *target && w.is_connected);
+
+                if !is_still_connected {
+                    state.connection.finish_disconnect_attempt();
+                }
+
+                if let Some(start_time) = state.connection.connection_start_time {
+                    if start_time.elapsed() > Duration::from_secs(config::CONNECTION_TIMEOUT_SECS) {
+                        state.connection.finish_disconnect_attempt();
+                    }
+                }
+            } else if state.connection.connection_result_rx.is_none() {
+                state.connection.finish_disconnect_attempt();
             }
         }
 
@@ -363,13 +416,6 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                         break;
                     }
                 }
-            }
-        } else {
-            if state.connection.is_connecting
-                || state.refresh.is_initial_loading
-                || state.refresh.is_refreshing_networks
-            {
-                state.ui.loading_frame = (state.ui.loading_frame + 1) % 10;
             }
         }
     }

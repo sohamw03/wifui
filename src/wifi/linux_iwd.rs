@@ -246,11 +246,14 @@ impl IwdBackend {
             .call("GetDiagnostics", &())
             .or_else(|_| proxy.call("GetDiagnostic", &()))
             .ok()?;
-        let freq_mhz = diag.get("Frequency").and_then(|v| {
-            u32::try_from(v.clone())
-                .ok()
-                .or_else(|| u64::try_from(v.clone()).ok().map(|val| val as u32))
-        })?;
+        let freq_mhz = diag
+            .get("Frequency")
+            .and_then(|v| {
+                u32::try_from(v.clone())
+                    .ok()
+                    .or_else(|| u64::try_from(v.clone()).ok().map(|val| val as u32))
+            })
+            .unwrap_or(0);
         let link_speed = diag
             .get("RxRate")
             .or_else(|| diag.get("TxRate"))
@@ -796,5 +799,14 @@ mod tests {
     fn matches_saved_networks_by_name() {
         assert!(iwd_saved_network_matches("home", "home"));
         assert!(!iwd_saved_network_matches("home", "guest"));
+    }
+
+    #[test]
+    fn normalizes_bssid_string() {
+        assert_eq!(
+            normalize_bssid(" 00:11:22:AA:BB:CC "),
+            Some("00:11:22:aa:bb:cc".to_string())
+        );
+        assert_eq!(normalize_bssid("   "), None);
     }
 }

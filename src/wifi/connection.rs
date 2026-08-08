@@ -316,6 +316,10 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
                 };
 
                 (freq as u64, ch, Some(format_bssid(bss.dot11Bssid)))
+            } else if let Some((ref conn_ssid, _, conn_bssid)) = current_connection
+                && conn_ssid == &ssid
+            {
+                (0, 0, Some(format_bssid(conn_bssid)))
             } else {
                 (0, 0, None)
             };
@@ -399,19 +403,23 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
             wifi_map
                 .entry((ssid, authentication))
                 .and_modify(|info| {
-                    if new_info.is_saved {
-                        info.is_saved = true;
-                    }
-                    if new_info.is_connected {
-                        info.is_connected = true;
-                        info.link_speed = new_info.link_speed;
-                        info.bssid = new_info.bssid.clone();
-                    }
-                    if new_info.signal > info.signal {
+                    let replace_radio = if new_info.is_connected != info.is_connected {
+                        new_info.is_connected
+                    } else {
+                        new_info.signal > info.signal
+                    };
+                    if replace_radio {
                         info.signal = new_info.signal;
                         info.channel = new_info.channel;
                         info.frequency = new_info.frequency;
+                        info.phy_type = new_info.phy_type.clone();
                         info.bssid = new_info.bssid.clone();
+                    }
+                    info.is_saved |= new_info.is_saved;
+                    info.is_connected |= new_info.is_connected;
+                    info.auto_connect |= new_info.auto_connect;
+                    if new_info.is_connected {
+                        info.link_speed = new_info.link_speed;
                     }
                 })
                 .or_insert(new_info);
@@ -437,4 +445,21 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
     });
 
     Ok(wifi_list)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_bssid() {
+        assert_eq!(
+            format_bssid([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]),
+            "00:11:22:33:44:55"
+        );
+        assert_eq!(
+            format_bssid([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]),
+            "aa:bb:cc:dd:ee:ff"
+        );
+    }
 }

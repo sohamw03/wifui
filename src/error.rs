@@ -5,6 +5,7 @@ use thiserror::Error;
 pub type WifiResult<T> = Result<T, WifiError>;
 
 /// Errors that can occur during WiFi operations
+#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum WifiError {
     #[cfg(all(not(windows), not(target_os = "linux")))]
@@ -82,6 +83,7 @@ pub enum WifiError {
     Internal(String),
 }
 
+#[allow(dead_code)]
 impl WifiError {
     pub fn dbus(operation: &str, error: &impl std::fmt::Display) -> Self {
         let err_str = error.to_string();
