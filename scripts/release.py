@@ -17,20 +17,36 @@ CHOCOLATEY_INSTALL_FILE = CHOCOLATEY_DIR / "tools" / "chocolateyinstall.ps1"
 RELEASE_ASSET = "wifui-x86_64-pc-windows-msvc.zip"
 RELEASE_URL = "https://github.com/sohamw03/wifui/releases/download/{version}/{asset}"
 CHOCO_SOURCE = "https://push.chocolatey.org/"
+WINGET_REPOSITORY = "microsoft/winget-pkgs"
+WINGET_PACKAGE_ID = "sohamw03.wifui"
+WINGET_ISSUE_TITLE = "[Update Request]: sohamw03.wifui"
 VERSION_PATTERN = re.compile(
     r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
+WINGET_ISSUE_URL_PATTERN = re.compile(
+    rf"https://github\.com/{re.escape(WINGET_REPOSITORY)}/issues/\d+"
+)
+WINGET_PR_URL_PATTERN = re.compile(
+    rf"https://github\.com/{re.escape(WINGET_REPOSITORY)}/pull/\d+"
+)
 
 
-def run_command(command, cwd=PROJECT_ROOT):
+def run_command(command, cwd=PROJECT_ROOT, capture_output=False):
     """Run a release command and stop if it fails."""
     print(f"Running: {' '.join(command)}")
+    options = {"check": True, "cwd": cwd}
+    if capture_output:
+        options.update(capture_output=True, text=True)
     try:
-        subprocess.run(command, check=True, cwd=cwd)
+        return subprocess.run(command, **options)
     except FileNotFoundError:
         print(f"Error: command not found: {command[0]}")
         sys.exit(1)
     except subprocess.CalledProcessError as error:
+        if capture_output:
+            output = error.stderr or error.stdout
+            if output:
+                print(output.rstrip())
         print(f"Command failed with exit code {error.returncode}: {' '.join(command)}")
         sys.exit(error.returncode or 1)
 
@@ -266,9 +282,84 @@ def publish_choco(version=None):
     print(f"Pushed {package_name} to Chocolatey.")
 
 
-def publish_winget():
+def publish_winget(version=None):
     print("\nPublishing to WinGet...")
-    pass
+    version = version or prompt_release_version()
+    release_url = RELEASE_URL.format(version=version, asset=RELEASE_ASSET)
+    issue_body = (
+        "### What type of update are you requesting?\n\n"
+        "A new version of an existing package\n\n"
+        "### Current Package Identifier\n\n"
+        f"{WINGET_PACKAGE_ID}\n\n"
+        "### Package Version\n\n"
+        f"{version}\n\n"
+        "### Please describe the changes you would like to see\n\n"
+        f"Please update the package to version {version}.\n\n"
+        f"Release asset: {release_url}"
+    )
+
+    print("Creating the WinGet package-update issue...")
+    issue_result = run_command(
+        [
+            "gh",
+            "issue",
+            "create",
+            "--repo",
+            WINGET_REPOSITORY,
+            "--title",
+            WINGET_ISSUE_TITLE,
+            "--label",
+            "Package-Update",
+            "--body",
+            issue_body,
+        ],
+        capture_output=True,
+    )
+    issue_output = "\n".join(
+        output for output in (issue_result.stdout, issue_result.stderr) if output
+    )
+    issue_match = WINGET_ISSUE_URL_PATTERN.search(issue_output)
+    if not issue_match:
+        print("Error: GitHub CLI did not return a WinGet issue URL.")
+        if issue_output.strip():
+            print(issue_output.rstrip())
+        sys.exit(1)
+    issue_url = issue_match.group(0)
+    print(f"WinGet issue: {issue_url}")
+
+    run_command(
+        [
+            "wingetcreate",
+            "update",
+            WINGET_PACKAGE_ID,
+            "--version",
+            version,
+            "--urls",
+            release_url,
+        ]
+    )
+
+    manifest_path = f".\\manifests\\s\\sohamw03\\wifui\\{version}\\"
+    submit_result = run_command(
+        ["wingetcreate", "submit", manifest_path],
+        capture_output=True,
+    )
+    submit_output = "\n".join(
+        output for output in (submit_result.stdout, submit_result.stderr) if output
+    )
+    pr_match = WINGET_PR_URL_PATTERN.search(submit_output)
+    if pr_match:
+        print(f"WinGet pull request: {pr_match.group(0)}")
+    else:
+        print("WinGet submit completed, but no pull request URL was detected.")
+        if submit_output.strip():
+            print("Submit output:")
+            print(submit_output.rstrip())
+
+    wait_for_manual_step(
+        "Review the WinGet issue and pull request, then make any required metadata, "
+        "label, or flag corrections manually."
+    )
 
 
 def main():
@@ -326,8 +417,20 @@ def run_full_release():
         "  git push origin main --tags"
     )
 
-    publish_scoop()
-    publish_choco(version)
+    if confirm("Do you want to check Scoop status? (y/N): "):
+        publish_scoop()
+    else:
+        print("Skipping Scoop.")
+
+    if confirm("Do you want to publish to Chocolatey? (y/N): "):
+        publish_choco(version)
+    else:
+        print("Skipping Chocolatey.")
+
+    if confirm("Do you want to publish to WinGet? (y/N): "):
+        publish_winget(version)
+    else:
+        print("Skipping WinGet.")
 
 
 if __name__ == "__main__":

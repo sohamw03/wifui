@@ -57,6 +57,8 @@ choco install wifui
 
 ### [Crates.io](https://crates.io/crates/wifui)
 
+Works on Linux too. Linux requires NetworkManager or iwd and system D-Bus.
+
 ```sh
 cargo install wifui
 ```
