@@ -1,3 +1,4 @@
 target/
 manifests/
 choco/
+__pycache__/

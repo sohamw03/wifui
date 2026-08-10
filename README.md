@@ -1,6 +1,6 @@
 ![WifUIBanner](images/Animation.gif)
 
-# WifUI
+# **WiF**u**i**
 
 [![Downloads](https://img.shields.io/github/downloads/sohamw03/wifui/total)](https://github.com/sohamw03/wifui/releases)
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/sohamw03/wifui/release.yml)
@@ -10,7 +10,7 @@
 [![Crates.io Version](https://img.shields.io/crates/v/wifui)](https://crates.io/crates/wifui)
 ![GitHub Repo stars](https://img.shields.io/github/stars/sohamw03/wifui)
 
-**WifUI** is a blazing fast, lightweight Terminal User Interface (TUI) for managing Wi-Fi connections on **Windows and Linux**. Built with Rust and `ratatui`, it offers a keyboard-centric way to scan, connect, and monitor your network status without leaving the terminal.
+**WiF**u**i** is a blazing fast, lightweight Terminal User Interface (TUI) for managing Wi-Fi connections on **Windows and Linux**. Built with Rust and `ratatui`, it offers a keyboard-centric way to scan, connect, share, and monitor your network status without leaving the terminal.
 
 Linux support is experimental and uses the system D-Bus through NetworkManager or iwd. NetworkManager is preferred by default; use `--backend iwd` when iwd is the intended manager. Linux currently targets the first usable Wi-Fi interface. NetworkManager can read saved secrets for secured QR sharing; iwd does not expose stored passphrases through its public D-Bus API.
 
@@ -26,7 +26,7 @@ Linux support is experimental and uses the system D-Bus through NetworkManager o
 
 | Home | Add Network |
 |:---:|:---:|
-| ![Home](images/main.png) | ![Search](images/addnetwork.png) |
+| ![Home](images/home.png) | ![Search](images/addnetwork.png) |
 | Password | Search |
 | ![Password](images/password.png) | ![Search](images/search.png) |
 | Share |
