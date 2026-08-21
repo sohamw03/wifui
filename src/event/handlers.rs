@@ -1,4 +1,4 @@
-use crate::app::AppState;
+use crate::app::{AppState, PointerShape};
 use crate::config;
 use crate::error::WifiError;
 use crate::ui::LayoutAreas;
@@ -6,6 +6,7 @@ use crate::wifi::{disconnect, get_connected_ssid, get_wifi_networks};
 use color_eyre::eyre::eyre;
 use crossterm::event::{self, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use secrecy::SecretString;
+use std::io::Write;
 use std::time::Instant;
 use tokio::sync::mpsc;
 
@@ -742,6 +743,55 @@ pub fn handle_mouse(mouse: MouseEvent, state: &mut AppState, areas: &LayoutAreas
     }
 }
 
+/// Returns the pointer shape that should be shown for the cell under the cursor.
+fn desired_pointer(col: u16, row: u16, state: &AppState, areas: &LayoutAreas) -> PointerShape {
+    if state.ui.show_manual_add_popup {
+        if let Some(btn) = areas.manual_connect_area
+            && contains(btn, col, row)
+        {
+            return PointerShape::Pointer;
+        }
+        if areas
+            .manual_field_areas
+            .iter()
+            .flatten()
+            .any(|field| contains(*field, col, row))
+        {
+            return PointerShape::Text;
+        }
+        return PointerShape::Arrow;
+    }
+    if state.is_popup_open() {
+        return PointerShape::Arrow;
+    }
+    if row_under_cursor(col, row, state, areas).is_some() {
+        PointerShape::Pointer
+    } else {
+        PointerShape::Arrow
+    }
+}
+
+/// Requests the terminal to switch the mouse pointer shape via OSC 22.
+///
+/// Terminals without OSC 22 support (Windows Terminal, Alacritty, WezTerm, tmux) ignore it.
+pub fn sync_pointer_shape(col: u16, row: u16, state: &mut AppState, areas: &LayoutAreas) {
+    let desired = desired_pointer(col, row, state, areas);
+    if state.mouse.current_pointer == desired {
+        return;
+    }
+    state.mouse.current_pointer = desired;
+    let mut stdout = std::io::stdout();
+    let _ = write!(stdout, "\x1b]22;{}\x1b\\", desired.osc_name());
+    let _ = stdout.flush();
+}
+
+/// Resets the terminal mouse pointer shape back to the terminal default.
+pub fn reset_pointer_shape() {
+    let mut stdout = std::io::stdout();
+    let _ = write!(stdout, "\x1b]22;\x1b\\");
+    let _ = stdout.flush();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -767,6 +817,8 @@ mod tests {
 #[cfg(test)]
 mod mouse_tests {
     use super::*;
+    use crate::app::PointerShape;
+    use crate::wifi::WifiInfo;
     use ratatui::layout::Rect;
 
     #[test]
@@ -783,5 +835,67 @@ mod mouse_tests {
     fn contains_zero_size_rect_never_matches() {
         let rect = Rect::new(0, 0, 0, 0);
         assert!(!contains(rect, 0, 0));
+    }
+
+    fn test_state(networks: Vec<WifiInfo>) -> AppState {
+        let mut state = AppState::new(networks, false, true);
+        state.refresh.is_initial_loading = false;
+        state.update_filtered_list();
+        state
+    }
+
+    #[test]
+    fn pointer_over_list_rows_and_arrow_elsewhere() {
+        let mut state = test_state(vec![WifiInfo {
+            ssid: "net".to_string(),
+            ..Default::default()
+        }]);
+        let areas = LayoutAreas {
+            list_area: Rect::new(0, 0, 20, 10),
+            ..Default::default()
+        };
+        // Inside first list row -> Pointer
+        assert_eq!(desired_pointer(5, 1, &state, &areas), PointerShape::Pointer);
+        // Below all rows -> Arrow
+        assert_eq!(desired_pointer(5, 8, &state, &areas), PointerShape::Arrow);
+        // Outside list border columns -> Arrow
+        assert_eq!(desired_pointer(19, 1, &state, &areas), PointerShape::Arrow);
+
+        // Hover tracking mirrors the same rule
+        state.mouse.hovered_row = Some(0);
+        assert_eq!(desired_pointer(5, 1, &state, &areas), PointerShape::Pointer);
+    }
+
+    #[test]
+    fn pointer_over_manual_popup_button_fields_and_background() {
+        let state = test_state(vec![]);
+        let mut state = state;
+        state.ui.show_manual_add_popup = true;
+        let areas = LayoutAreas {
+            manual_connect_area: Some(Rect::new(2, 6, 6, 1)),
+            manual_field_areas: [
+                Some(Rect::new(2, 2, 10, 1)),
+                Some(Rect::new(2, 3, 10, 1)),
+                None,
+                None,
+            ],
+            ..Default::default()
+        };
+        // Over Connect button -> Pointer
+        assert_eq!(desired_pointer(4, 6, &state, &areas), PointerShape::Pointer);
+        // Over SSID field -> Text
+        assert_eq!(desired_pointer(4, 2, &state, &areas), PointerShape::Text);
+        // Over password field -> Text
+        assert_eq!(desired_pointer(4, 3, &state, &areas), PointerShape::Text);
+        // Popup background -> Arrow
+        assert_eq!(desired_pointer(4, 4, &state, &areas), PointerShape::Arrow);
+    }
+
+    #[test]
+    fn arrow_over_other_popups() {
+        let mut state = test_state(vec![]);
+        state.ui.show_qr_popup = true;
+        let areas = LayoutAreas::default();
+        assert_eq!(desired_pointer(5, 5, &state, &areas), PointerShape::Arrow);
     }
 }

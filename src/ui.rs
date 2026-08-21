@@ -440,9 +440,12 @@ fn render_network_list(
                     .is_some_and(|ssid| ssid == w.ssid))
                 && !is_this_disconnecting;
 
-            // Preserve the original row-wide coloring: saved rows are blue,
-            // connected rows are green and bold, connecting is yellow, and disconnecting is orange.
-            // Mouse hover gets a subtle background when nothing else overrides.
+            // Full-width hover via ListItem style; shown behind saved (blue)
+            // and connected (green) rows too, but not transient states.
+            let is_hovered = !is_dimmed
+                && !is_this_connecting
+                && !is_this_disconnecting
+                && state.mouse.hovered_row == Some(index);
             let row_style = if is_dimmed {
                 if is_connected {
                     Style::default()
@@ -465,7 +468,10 @@ fn render_network_list(
                     .add_modifier(Modifier::BOLD)
             } else if w.is_saved {
                 Style::default().fg(theme::BLUE)
-            } else if state.mouse.hovered_row == Some(index) {
+            } else {
+                Style::default()
+            };
+            let item_style = if is_hovered {
                 Style::default().bg(theme::HOVER_BG)
             } else {
                 Style::default()
@@ -513,7 +519,7 @@ fn render_network_list(
                 }
             }
 
-            ListItem::new(Line::from(spans))
+            ListItem::new(Line::from(spans)).style(item_style)
         })
         .collect();
 
@@ -1275,5 +1281,62 @@ mod tests {
         assert_eq!(spans.len(), 2);
         assert_eq!(spans[0].style.fg, Some(theme::DIMMED));
         assert_eq!(spans[1].style.fg, Some(theme::DIMMED));
+    }
+
+    #[test]
+    fn hover_fills_whole_row_width() {
+        use crate::app::AppState;
+        use crate::wifi::WifiInfo;
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let networks = vec![
+            WifiInfo {
+                ssid: "first".to_string(),
+                ..Default::default()
+            },
+            WifiInfo {
+                ssid: "b".to_string(),
+                ..Default::default()
+            },
+        ];
+        let mut state = AppState::new(networks, false, true);
+        state.refresh.is_initial_loading = false;
+        state.update_filtered_list();
+        state.ui.l_state.select(Some(0));
+        state.mouse.hovered_row = Some(1);
+        *state.ui.l_state.offset_mut() = 0;
+        state.mouse.scroll_offset = 0;
+
+        let backend = TestBackend::new(100, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut captured_areas = LayoutAreas::default();
+        terminal
+            .draw(|f| {
+                captured_areas = crate::ui::render(f, &mut state);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let list_area = captured_areas.list_area;
+        // hovered index 1 with offset 0 -> second row inside list (y = list_y +1 +1)
+        let hover_y = list_area.y + 1 + 1;
+        let hover_x_trailing = list_area.x + list_area.width - 3; // inside border, near right edge
+        let hover_cell = buffer.cell((hover_x_trailing, hover_y)).unwrap();
+        assert_eq!(
+            hover_cell.style().bg,
+            Some(theme::HOVER_BG),
+            "trailing cell on hovered row should have HOVER_BG, got {:?} at ({},{}) list_area={:?}",
+            hover_cell.style().bg,
+            hover_x_trailing,
+            hover_y,
+            list_area
+        );
+        // non-hovered selected row should have selection bg, not hover
+        let selected_y = list_area.y + 1;
+        let selected_cell = buffer.cell((hover_x_trailing, selected_y)).unwrap();
+        assert_eq!(
+            selected_cell.style().bg,
+            Some(theme::SELECTION_BG),
+            "selected row should have SELECTION_BG"
+        );
     }
 }

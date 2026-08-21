@@ -215,6 +215,26 @@ impl RefreshState {
     }
 }
 
+/// Mouse pointer shapes requestable from the terminal via OSC 22
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum PointerShape {
+    #[default]
+    Arrow,
+    Pointer,
+    Text,
+}
+
+impl PointerShape {
+    /// CSS cursor name emitted in the OSC 22 sequence
+    pub fn osc_name(self) -> &'static str {
+        match self {
+            PointerShape::Arrow => "default",
+            PointerShape::Pointer => "pointer",
+            PointerShape::Text => "text",
+        }
+    }
+}
+
 /// Mouse interaction state
 #[derive(Debug, Default)]
 pub struct MouseState {
@@ -224,6 +244,8 @@ pub struct MouseState {
     pub last_list_click: Option<(usize, Instant)>,
     /// Scroll offset for the network list viewport (mirrors ListState::offset)
     pub scroll_offset: usize,
+    /// Pointer shape last requested from the terminal, to avoid redundant OSC 22 writes
+    pub current_pointer: PointerShape,
 }
 
 /// Main application state

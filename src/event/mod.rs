@@ -21,7 +21,7 @@ use crossterm::{
 };
 use handlers::{
     handle_main_view, handle_manual_add_popup, handle_mouse, handle_password_popup,
-    handle_qr_popup, handle_search_mode,
+    handle_qr_popup, handle_search_mode, reset_pointer_shape, sync_pointer_shape,
 };
 use ratatui::DefaultTerminal;
 use std::time::{Duration, Instant};
@@ -55,6 +55,7 @@ fn start_network_refresh(state: &mut AppState) {
 
 impl Drop for CursorStyleGuard {
     fn drop(&mut self) {
+        let _ = reset_pointer_shape();
         let _ = crossterm::execute!(std::io::stdout(), SetCursorStyle::DefaultUserShape);
         let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     }
@@ -390,6 +391,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                 Event::Mouse(mouse) => {
                     state.refresh.last_interaction = Instant::now();
                     handle_mouse(mouse, state, &layout_areas);
+                    sync_pointer_shape(mouse.column, mouse.row, state, &layout_areas);
                 }
                 _ => {}
             }
