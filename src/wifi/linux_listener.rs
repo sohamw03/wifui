@@ -2,7 +2,7 @@
 
 use super::{
     IWD_SERVICE, IWD_STATION_INTERFACE, ListenerSpec, NETWORK_MANAGER_SERVICE, NM_DEVICE_INTERFACE,
-    NM_DEVICE_WIFI_INTERFACE, value_string,
+    NM_DEVICE_WIFI_INTERFACE, linux_network_manager::DEVICE_STATE_ACTIVATED, value_string,
 };
 use crate::error::{WifiError, WifiResult};
 use crate::wifi::types::ConnectionEvent;
@@ -156,7 +156,7 @@ async fn run_network_manager(
                 let Ok((new_state, _, _)) = message.body().deserialize::<(u32, u32, u32)>() else {
                     continue;
                 };
-                let connected = if new_state == 100 {
+                let connected = if new_state == DEVICE_STATE_ACTIVATED {
                     nm_connected_ssid(&connection, &device_path).await
                 } else {
                     None
@@ -256,7 +256,7 @@ async fn nm_connected_ssid(connection: &Connection, device_path: &str) -> Option
     .await
     .ok()?;
     let state: u32 = device.get_property("State").await.ok()?;
-    if state != 100 {
+    if state != DEVICE_STATE_ACTIVATED {
         return None;
     }
     let wireless = Proxy::new(

@@ -1,4 +1,4 @@
-/// Centralized configuration constants for WifUI
+//! Centralized configuration constants for WifUI
 
 // UI Dimensions
 pub const MAIN_WINDOW_HEIGHT: u16 = 32;
@@ -77,16 +77,11 @@ pub mod icons {
 }
 
 /// Icon set to use based on configuration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IconSet {
+    #[default]
     Nerd,
     Ascii,
-}
-
-impl Default for IconSet {
-    fn default() -> Self {
-        IconSet::Nerd
-    }
 }
 
 impl IconSet {

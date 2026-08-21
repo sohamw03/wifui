@@ -73,7 +73,7 @@ pub fn is_backend_available() -> bool {
 pub fn backend_name() -> String {
     #[cfg(target_os = "linux")]
     {
-        return linux::backend_name();
+        linux::backend_name()
     }
 
     #[cfg(all(not(windows), not(target_os = "linux")))]
@@ -91,7 +91,7 @@ pub fn backend_name() -> String {
 pub fn backend_unavailable_message() -> String {
     #[cfg(target_os = "linux")]
     {
-        return linux::backend_unavailable_message();
+        linux::backend_unavailable_message()
     }
 
     #[cfg(all(not(windows), not(target_os = "linux")))]

@@ -6,7 +6,7 @@ use super::{
     new_proxy, owned_object_path, system_connection, value_bool, value_string,
 };
 use crate::error::{WifiError, WifiResult};
-use crate::wifi::types::WifiInfo;
+use crate::wifi::types::{WifiInfo, normalize_bssid, sort_wifi_infos};
 use secrecy::{ExposeSecret, SecretString};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -70,10 +70,10 @@ impl IwdBackend {
                 .and_then(value_string)
                 .filter(|name| !name.is_empty());
             if let Some(usable) = usable_interface {
-                if let Some(target) = target_interface {
-                    if usable != target {
-                        continue;
-                    }
+                if let Some(target) = target_interface
+                    && usable != target
+                {
+                    continue;
                 }
                 return Ok(Self {
                     station_path: path.to_string(),
@@ -390,13 +390,13 @@ impl WifiBackend for IwdBackend {
             let (phy_type, mut channel, mut frequency) = iwd_unknown_metadata();
             let mut link_speed = None;
             let mut bssid = None;
-            if record.is_connected {
-                if let Some(diagnostics) = &diagnostics {
-                    frequency = nm_frequency_to_hz(diagnostics.frequency_mhz);
-                    channel = nm_frequency_to_channel(diagnostics.frequency_mhz);
-                    link_speed = diagnostics.link_speed;
-                    bssid = diagnostics.bssid.clone();
-                }
+            if record.is_connected
+                && let Some(diagnostics) = &diagnostics
+            {
+                frequency = nm_frequency_to_hz(diagnostics.frequency_mhz);
+                channel = nm_frequency_to_channel(diagnostics.frequency_mhz);
+                link_speed = diagnostics.link_speed;
+                bssid = diagnostics.bssid.clone();
             }
             let info = WifiInfo {
                 ssid: record.ssid.clone(),
@@ -414,38 +414,11 @@ impl WifiBackend for IwdBackend {
             };
             networks
                 .entry(record.ssid)
-                .and_modify(|current| {
-                    let replace_radio = if info.is_connected != current.is_connected {
-                        info.is_connected
-                    } else {
-                        info.signal > current.signal
-                    };
-                    if replace_radio {
-                        current.signal = info.signal;
-                        current.channel = info.channel;
-                        current.frequency = info.frequency;
-                        current.phy_type = info.phy_type.clone();
-                        current.bssid = info.bssid.clone();
-                    }
-                    current.is_saved |= info.is_saved;
-                    current.is_connected |= info.is_connected;
-                    current.auto_connect |= info.auto_connect;
-                    if info.is_connected {
-                        current.link_speed = info.link_speed;
-                        current.bssid = info.bssid.clone();
-                    }
-                })
+                .and_modify(|current| current.merge_observation(&info))
                 .or_insert(info);
         }
         let mut networks: Vec<_> = networks.into_values().collect();
-        networks.sort_by(|left, right| {
-            right
-                .is_connected
-                .cmp(&left.is_connected)
-                .then_with(|| right.is_saved.cmp(&left.is_saved))
-                .then_with(|| right.signal.cmp(&left.signal))
-                .then_with(|| left.ssid.cmp(&right.ssid))
-        });
+        sort_wifi_infos(&mut networks);
         Ok(networks)
     }
 
@@ -513,11 +486,6 @@ impl WifiBackend for IwdBackend {
             operation: "reading saved passwords through D-Bus".to_string(),
         })
     }
-}
-
-fn normalize_bssid(value: &str) -> Option<String> {
-    let value = value.trim().to_ascii_lowercase();
-    (!value.is_empty()).then_some(value)
 }
 
 fn managed_objects(connection: &Connection) -> WifiResult<ManagedObjects> {
@@ -730,10 +698,9 @@ fn unregister_credential_agent(connection: &Connection, state: Arc<Mutex<Credent
         IWD_SERVICE,
         IWD_PATH,
         IWD_AGENT_MANAGER_INTERFACE,
-    ) {
-        if let Ok(path) = owned_object_path(IWD_AGENT_PATH) {
-            let _ = manager.call::<_, _, ()>("UnregisterAgent", &path);
-        }
+    ) && let Ok(path) = owned_object_path(IWD_AGENT_PATH)
+    {
+        let _ = manager.call::<_, _, ()>("UnregisterAgent", &path);
     }
 }
 

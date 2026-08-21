@@ -2,7 +2,7 @@ use crate::config;
 use crate::error::{WifiError, WifiResult};
 use crate::wifi::handle::WlanHandle;
 use crate::wifi::profile::{create_profile_xml, is_profile_auto_connect};
-use crate::wifi::types::WifiInfo;
+use crate::wifi::types::{WifiInfo, sort_wifi_infos};
 use secrecy::SecretString;
 use std::collections::HashMap;
 use windows::{
@@ -103,9 +103,12 @@ pub fn connect_open(ssid: &str, hidden: bool) -> WifiResult<()> {
 pub fn disconnect() -> WifiResult<()> {
     let handle = WlanHandle::open()?;
     let guid = handle.get_interface_guid()?;
+    disconnect_on(&handle, &guid)
+}
 
+fn disconnect_on(handle: &WlanHandle, guid: &windows::core::GUID) -> WifiResult<()> {
     unsafe {
-        let result = WlanDisconnect(handle.as_raw(), &guid, None);
+        let result = WlanDisconnect(handle.as_raw(), guid, None);
 
         if result != ERROR_SUCCESS.0 {
             return Err(WifiError::DisconnectFailed { code: result });
@@ -116,7 +119,10 @@ pub fn disconnect() -> WifiResult<()> {
 
 /// Disconnect and wait for it to complete, with a delay after
 pub fn disconnect_and_wait() -> WifiResult<()> {
-    disconnect()?;
+    // Reuse a single handle for the disconnect request and the completion polling.
+    let handle = WlanHandle::open()?;
+    let guid = handle.get_interface_guid()?;
+    disconnect_on(&handle, &guid)?;
 
     // Wait for disconnect to complete by polling connection status
     let max_wait = std::time::Duration::from_secs(5);
@@ -124,7 +130,7 @@ pub fn disconnect_and_wait() -> WifiResult<()> {
 
     while start.elapsed() < max_wait {
         std::thread::sleep(std::time::Duration::from_millis(100));
-        match get_connected_ssid() {
+        match query_connected_ssid(&handle) {
             Ok(None) => break,       // Successfully disconnected
             Ok(Some(_)) => continue, // Still connected, keep waiting
             Err(_) => break,         // Error checking, proceed anyway
@@ -142,6 +148,10 @@ pub fn disconnect_and_wait() -> WifiResult<()> {
 /// Get the currently connected SSID, if any
 pub fn get_connected_ssid() -> WifiResult<Option<String>> {
     let handle = WlanHandle::open()?;
+    query_connected_ssid(&handle)
+}
+
+fn query_connected_ssid(handle: &WlanHandle) -> WifiResult<Option<String>> {
     let guid = handle.get_interface_guid()?;
 
     let mut connected_ssid = None;
@@ -402,26 +412,7 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
 
             wifi_map
                 .entry((ssid, authentication))
-                .and_modify(|info| {
-                    let replace_radio = if new_info.is_connected != info.is_connected {
-                        new_info.is_connected
-                    } else {
-                        new_info.signal > info.signal
-                    };
-                    if replace_radio {
-                        info.signal = new_info.signal;
-                        info.channel = new_info.channel;
-                        info.frequency = new_info.frequency;
-                        info.phy_type = new_info.phy_type.clone();
-                        info.bssid = new_info.bssid.clone();
-                    }
-                    info.is_saved |= new_info.is_saved;
-                    info.is_connected |= new_info.is_connected;
-                    info.auto_connect |= new_info.auto_connect;
-                    if new_info.is_connected {
-                        info.link_speed = new_info.link_speed;
-                    }
-                })
+                .and_modify(|info| info.merge_observation(&new_info))
                 .or_insert(new_info);
         }
 
@@ -434,15 +425,7 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
     }
 
     // Sort by connected first, then saved, then signal strength descending
-    wifi_list.sort_by(|a, b| {
-        if a.is_connected != b.is_connected {
-            return b.is_connected.cmp(&a.is_connected);
-        }
-        if a.is_saved != b.is_saved {
-            return b.is_saved.cmp(&a.is_saved);
-        }
-        b.signal.cmp(&a.signal)
-    });
+    sort_wifi_infos(&mut wifi_list);
 
     Ok(wifi_list)
 }

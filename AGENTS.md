@@ -69,16 +69,16 @@ The normal runtime flow is:
 | `Cargo.toml` | Package metadata, shared dependencies, and target-specific Windows/Linux dependency selection |
 | `Cargo.lock` | Resolved dependency versions; retain Windows entries even on Linux |
 | `src/main.rs` | CLI arguments, terminal setup/restore, initial backend refresh |
-| `src/app.rs` | `AppState` and the network, UI, connection, input, and refresh state models |
+| `src/app.rs` | `AppState` and the network, UI, connection, input, and refresh state models; refresh application with selection preservation |
 | `src/config.rs` | UI dimensions, timing constants, refresh burst sizes, and icons |
 | `src/error.rs` | `WifiError`, `WifiResult`, and Windows WLAN reason-code formatting |
 | `src/event/mod.rs` | Main async event loop, background task result handling, listener setup |
 | `src/event/handlers.rs` | Keyboard handlers, connection/profile actions, search, and QR generation |
 | `src/input.rs` | Editable input state and cursor/word navigation |
-| `src/ui.rs` | Ratatui rendering for the main view and popups |
+| `src/ui.rs` | Ratatui rendering split into per-panel functions (list, details, popups) with shared input-scrolling and spinner helpers |
 | `src/theme.rs` | Shared TUI colors and styles |
 | `src/wifi/mod.rs` | Platform facade and compile-time backend selection |
-| `src/wifi/types.rs` | Shared `WifiInfo` and `ConnectionEvent` data types |
+| `src/wifi/types.rs` | Shared `WifiInfo` and `ConnectionEvent` data types, plus network-list merge/sort helpers shared by all backends |
 | `src/wifi/connection.rs` | Windows connect, disconnect, connected-SSID, and network-list operations |
 | `src/wifi/profile.rs` | Windows profile XML, saved profiles, passwords, auto-connect, and forget operations |
 | `src/wifi/scanning.rs` | Windows scan trigger |
@@ -138,17 +138,6 @@ NetworkManager saved-password readback and secured-network QR sharing are suppor
 the profile's D-Bus secret API. iwd does not expose stored passphrases through its public D-Bus
 API, so iwd secured QR sharing must remain an explanatory unsupported-operation error. The UI
 must never produce a secured QR code without credentials.
-
-## Next Linux backend improvements
-
-The next two backend items are intentionally deferred:
-
-1. Reduce refresh D-Bus/API calls by reusing a single network snapshot and avoiding repeated
-   connected-state, access-point, and saved-profile queries where the backend already has the
-   required data.
-2. Add event-driven access-point updates while retaining periodic refresh as a fallback. NetworkManager
-   and iwd should report nearby-network additions, removals, and relevant metadata changes through
-   their D-Bus signals; Windows should use WLAN scan/network notifications for the equivalent path.
 
 Automated Linux checks do not replace backend validation on real systems. The user must manually test
 the iwd backend on a host running iwd and system D-Bus, and manually test the Windows backend on a real

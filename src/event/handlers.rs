@@ -68,49 +68,7 @@ pub fn handle_manual_add_popup(key: KeyEvent, state: &mut AppState) -> bool {
         event::KeyCode::Enter => {
             match state.inputs.manual_input_field {
                 3 => state.inputs.manual_hidden = !state.inputs.manual_hidden,
-                4 => {
-                    // Connect
-                    if !state.inputs.manual_ssid_input.value.is_empty() {
-                        let ssid = state.inputs.manual_ssid_input.value.clone();
-                        let operation_id = state.connection.begin_connection_attempt(ssid.clone());
-                        let password =
-                            SecretString::from(state.inputs.manual_password_input.value.clone());
-                        let security = state.inputs.manual_security.clone();
-                        let hidden = state.inputs.manual_hidden;
-
-                        let (tx, rx) = mpsc::channel(1);
-                        state.connection.connection_result_rx = Some(rx);
-
-                        tokio::spawn(async move {
-                            disconnect_if_connected().await;
-                            let result = tokio::task::spawn_blocking(move || {
-                                if security == "Open" {
-                                    crate::wifi::connect_open(&ssid, hidden)
-                                } else {
-                                    // Map security string to auth/cipher
-                                    let (auth, cipher) = match security.as_str() {
-                                        "WPA3-Personal" => ("WPA3-SAE", "AES"),
-                                        "WPA2-Personal" => ("WPA2-PSK", "AES"),
-                                        "WPA-Personal" => ("WPA-PSK", "AES"),
-                                        "WEP" => ("Shared", "WEP"),
-                                        _ => ("WPA2-PSK", "AES"),
-                                    };
-                                    crate::wifi::connect_with_password(
-                                        &ssid, &password, auth, cipher, hidden,
-                                    )
-                                }
-                            })
-                            .await
-                            .unwrap_or_else(|e| Err(WifiError::Internal(e.to_string())));
-                            let _ = tx
-                                .send((operation_id, result.map_err(|e: WifiError| e.into())))
-                                .await;
-                        });
-
-                        state.ui.show_manual_add_popup = false;
-                        state.inputs.clear_manual();
-                    }
-                }
+                4 => trigger_manual_connect(state),
                 5 => {
                     // Cancel
                     state.ui.show_manual_add_popup = false;
@@ -390,93 +348,89 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
             });
         }
         event::KeyCode::Char('a') => {
-            if let Some(selected) = state.ui.l_state.selected() {
-                if let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned() {
-                    if wifi.is_saved {
-                        let ssid = wifi.ssid.clone();
-                        let auto_connect = !wifi.auto_connect;
-                        let operation_id = state.connection.begin_operation();
-                        let (tx, rx) = mpsc::channel(1);
-                        state.connection.connection_result_rx = Some(rx);
+            if let Some(selected) = state.ui.l_state.selected()
+                && let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned()
+                && wifi.is_saved
+            {
+                let ssid = wifi.ssid.clone();
+                let auto_connect = !wifi.auto_connect;
+                let operation_id = state.connection.begin_operation();
+                let (tx, rx) = mpsc::channel(1);
+                state.connection.connection_result_rx = Some(rx);
 
-                        tokio::spawn(async move {
-                            let result = tokio::task::spawn_blocking(move || {
-                                crate::wifi::set_auto_connect(&ssid, auto_connect)
-                            })
-                            .await;
-                            let result = match result {
-                                Ok(inner) => inner.map_err(|e: WifiError| e.into()),
-                                Err(e) => Err(eyre!(e.to_string())),
-                            };
-                            let _ = tx.send((operation_id, result)).await;
-                        });
-                    }
-                }
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        crate::wifi::set_auto_connect(&ssid, auto_connect)
+                    })
+                    .await;
+                    let result = match result {
+                        Ok(inner) => inner.map_err(|e: WifiError| e.into()),
+                        Err(e) => Err(eyre!(e.to_string())),
+                    };
+                    let _ = tx.send((operation_id, result)).await;
+                });
             }
         }
         event::KeyCode::Char('f') => {
-            if let Some(selected) = state.ui.l_state.selected() {
-                if let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned() {
-                    if wifi.is_saved {
-                        let ssid = wifi.ssid.clone();
-                        let operation_id = state.connection.begin_operation();
-                        let (tx, rx) = mpsc::channel(1);
-                        state.connection.connection_result_rx = Some(rx);
+            if let Some(selected) = state.ui.l_state.selected()
+                && let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned()
+                && wifi.is_saved
+            {
+                let ssid = wifi.ssid.clone();
+                let operation_id = state.connection.begin_operation();
+                let (tx, rx) = mpsc::channel(1);
+                state.connection.connection_result_rx = Some(rx);
 
-                        tokio::spawn(async move {
-                            let result = tokio::task::spawn_blocking(move || {
-                                crate::wifi::forget_network(&ssid)
-                            })
+                tokio::spawn(async move {
+                    let result =
+                        tokio::task::spawn_blocking(move || crate::wifi::forget_network(&ssid))
                             .await;
-                            let result = match result {
-                                Ok(inner) => inner.map_err(|e: WifiError| e.into()),
-                                Err(e) => Err(eyre!(e.to_string())),
-                            };
-                            let _ = tx.send((operation_id, result)).await;
-                        });
-                    }
-                }
+                    let result = match result {
+                        Ok(inner) => inner.map_err(|e: WifiError| e.into()),
+                        Err(e) => Err(eyre!(e.to_string())),
+                    };
+                    let _ = tx.send((operation_id, result)).await;
+                });
             }
         }
         event::KeyCode::Char('s') => {
-            if let Some(selected) = state.ui.l_state.selected() {
-                if let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned() {
-                    if wifi.is_saved {
-                        let ssid = wifi.ssid.clone();
-                        let auth = wifi.authentication.clone();
-                        if auth == "Open" || auth == "open" {
-                            let qr_lines = generate_wifi_qr(&ssid, &auth, None);
-                            state.ui.qr_code_lines = qr_lines;
-                            state.ui.show_qr_popup = true;
-                        } else if qr_auth_type(&auth).is_none() {
-                            state.ui.error_message = Some(
-                                "Secured-network QR sharing is unavailable for this security type"
-                                    .to_string(),
-                            );
-                        } else if state.ui.qr_result_rx.is_none() {
-                            let password_ssid = ssid.clone();
-                            let (tx, rx) = mpsc::channel(1);
-                            state.ui.qr_result_rx = Some(rx);
+            if let Some(selected) = state.ui.l_state.selected()
+                && let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned()
+                && wifi.is_saved
+            {
+                let ssid = wifi.ssid.clone();
+                let auth = wifi.authentication.clone();
+                if auth == "Open" || auth == "open" {
+                    let qr_lines = generate_wifi_qr(&ssid, &auth, None);
+                    state.ui.qr_code_lines = qr_lines;
+                    state.ui.show_qr_popup = true;
+                } else if qr_auth_type(&auth).is_none() {
+                    state.ui.error_message = Some(
+                        "Secured-network QR sharing is unavailable for this security type"
+                            .to_string(),
+                    );
+                } else if state.ui.qr_result_rx.is_none() {
+                    let password_ssid = ssid.clone();
+                    let (tx, rx) = mpsc::channel(1);
+                    state.ui.qr_result_rx = Some(rx);
 
-                            tokio::spawn(async move {
-                                let result = tokio::task::spawn_blocking(move || {
-                                    crate::wifi::get_wifi_password(&password_ssid)
-                                })
-                                .await;
-                                let result = match result {
-                                    Ok(Ok(Some(password))) => {
-                                        Ok(generate_wifi_qr(&ssid, &auth, Some(&password)))
-                                    }
-                                    Ok(Ok(None)) => {
-                                        Err(eyre!("the saved profile has no readable password"))
-                                    }
-                                    Ok(Err(error)) => Err(eyre!(error.to_string())),
-                                    Err(error) => Err(eyre!(error.to_string())),
-                                };
-                                let _ = tx.send(result).await;
-                            });
-                        }
-                    }
+                    tokio::spawn(async move {
+                        let result = tokio::task::spawn_blocking(move || {
+                            crate::wifi::get_wifi_password(&password_ssid)
+                        })
+                        .await;
+                        let result = match result {
+                            Ok(Ok(Some(password))) => {
+                                Ok(generate_wifi_qr(&ssid, &auth, Some(&password)))
+                            }
+                            Ok(Ok(None)) => {
+                                Err(eyre!("the saved profile has no readable password"))
+                            }
+                            Ok(Err(error)) => Err(eyre!(error.to_string())),
+                            Err(error) => Err(eyre!(error.to_string())),
+                        };
+                        let _ = tx.send(result).await;
+                    });
                 }
             }
         }
@@ -708,39 +662,39 @@ pub fn handle_mouse(mouse: MouseEvent, state: &mut AppState, areas: &LayoutAreas
 
             // --- QR popup: click-away to dismiss ---
             if state.ui.show_qr_popup {
-                if let Some(qr_area) = areas.qr_popup_area {
-                    if !contains(qr_area, col, row) {
-                        state.ui.show_qr_popup = false;
-                        state.ui.qr_code_lines.clear();
-                    }
+                if let Some(qr_area) = areas.qr_popup_area
+                    && !contains(qr_area, col, row)
+                {
+                    state.ui.show_qr_popup = false;
+                    state.ui.qr_code_lines.clear();
                 }
                 return;
             }
 
             // --- Manual-add popup ---
             if state.ui.show_manual_add_popup {
-                if let Some(popup_area) = areas.manual_popup_area {
-                    if !contains(popup_area, col, row) {
-                        // Click outside — dismiss
-                        state.ui.show_manual_add_popup = false;
-                        state.inputs.clear_manual();
-                        return;
-                    }
+                if let Some(popup_area) = areas.manual_popup_area
+                    && !contains(popup_area, col, row)
+                {
+                    // Click outside — dismiss
+                    state.ui.show_manual_add_popup = false;
+                    state.inputs.clear_manual();
+                    return;
                 }
                 // Click inside the popup: hit-test connect button first
-                if let Some(btn) = areas.manual_connect_area {
-                    if contains(btn, col, row) {
-                        trigger_manual_connect(state);
-                        return;
-                    }
+                if let Some(btn) = areas.manual_connect_area
+                    && contains(btn, col, row)
+                {
+                    trigger_manual_connect(state);
+                    return;
                 }
                 // Hit-test individual fields (SSID=0, Password=1, Security=2, Hidden=3)
                 for (i, field_area) in areas.manual_field_areas.iter().enumerate() {
-                    if let Some(area) = field_area {
-                        if contains(*area, col, row) {
-                            state.inputs.manual_input_field = i;
-                            return;
-                        }
+                    if let Some(area) = field_area
+                        && contains(*area, col, row)
+                    {
+                        state.inputs.manual_input_field = i;
+                        return;
                     }
                 }
                 return;
@@ -748,11 +702,11 @@ pub fn handle_mouse(mouse: MouseEvent, state: &mut AppState, areas: &LayoutAreas
 
             // --- Password popup: click-away to dismiss ---
             if state.ui.show_password_popup {
-                if let Some(pw_area) = areas.password_popup_area {
-                    if !contains(pw_area, col, row) {
-                        state.ui.show_password_popup = false;
-                        state.inputs.password_input.clear();
-                    }
+                if let Some(pw_area) = areas.password_popup_area
+                    && !contains(pw_area, col, row)
+                {
+                    state.ui.show_password_popup = false;
+                    state.inputs.password_input.clear();
                 }
                 return;
             }

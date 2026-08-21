@@ -7,7 +7,7 @@ use super::{
     owned_object_path, owned_value, system_connection, value_bool, value_bytes, value_string,
 };
 use crate::error::{WifiError, WifiResult};
-use crate::wifi::types::WifiInfo;
+use crate::wifi::types::{WifiInfo, normalize_bssid, sort_wifi_infos};
 use secrecy::{ExposeSecret, SecretString};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -15,7 +15,7 @@ use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 
 const DEVICE_TYPE_WIFI: u32 = 2;
-const DEVICE_STATE_ACTIVATED: u32 = 100;
+pub(super) const DEVICE_STATE_ACTIVATED: u32 = 100;
 const AP_FLAGS_PRIVACY: u32 = 0x0000_0001;
 const SEC_PAIR_WEP40: u32 = 0x0000_0001;
 const SEC_PAIR_WEP104: u32 = 0x0000_0002;
@@ -88,10 +88,10 @@ impl NetworkManagerBackend {
                 _ => continue,
             };
             if device_type == DEVICE_TYPE_WIFI && managed {
-                if let Some(target) = target_interface {
-                    if interface != target {
-                        continue;
-                    }
+                if let Some(target) = target_interface
+                    && interface != target
+                {
+                    continue;
                 }
                 return Ok(Self {
                     device_path,
@@ -461,39 +461,12 @@ impl WifiBackend for NetworkManagerBackend {
             };
             networks
                 .entry(ssid)
-                .and_modify(|current| {
-                    let replace_radio = if info.is_connected != current.is_connected {
-                        info.is_connected
-                    } else {
-                        info.signal > current.signal
-                    };
-                    if replace_radio {
-                        current.signal = info.signal;
-                        current.channel = info.channel;
-                        current.frequency = info.frequency;
-                        current.phy_type = info.phy_type.clone();
-                        current.bssid = info.bssid.clone();
-                    }
-                    current.is_saved |= info.is_saved;
-                    current.is_connected |= info.is_connected;
-                    current.auto_connect |= info.auto_connect;
-                    if info.is_connected {
-                        current.link_speed = info.link_speed;
-                        current.bssid = info.bssid.clone();
-                    }
-                })
+                .and_modify(|current| current.merge_observation(&info))
                 .or_insert(info);
         }
 
         let mut networks: Vec<_> = networks.into_values().collect();
-        networks.sort_by(|left, right| {
-            right
-                .is_connected
-                .cmp(&left.is_connected)
-                .then_with(|| right.is_saved.cmp(&left.is_saved))
-                .then_with(|| right.signal.cmp(&left.signal))
-                .then_with(|| left.ssid.cmp(&right.ssid))
-        });
+        sort_wifi_infos(&mut networks);
         Ok(networks)
     }
 
@@ -587,11 +560,6 @@ impl WifiBackend for NetworkManagerBackend {
                 })?;
         Ok(extract_profile_secret(&secrets, setting_name))
     }
-}
-
-fn normalize_bssid(value: &str) -> Option<String> {
-    let value = value.trim().to_ascii_lowercase();
-    (!value.is_empty()).then_some(value)
 }
 
 fn is_wifi_profile(settings: &SettingsMap) -> bool {

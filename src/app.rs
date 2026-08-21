@@ -186,6 +186,9 @@ impl InputStates {
     }
 }
 
+/// Payload sent back to the event loop when a background network refresh finishes.
+pub type NetworkUpdate = Result<(Vec<WifiInfo>, Option<String>)>;
+
 /// Refresh and timing state
 #[derive(Debug)]
 pub struct RefreshState {
@@ -193,7 +196,7 @@ pub struct RefreshState {
     pub last_interaction: Instant,
     pub last_manual_refresh: Instant,
     pub is_refreshing_networks: bool,
-    pub network_update_rx: Option<Receiver<Result<(Vec<WifiInfo>, Option<String>)>>>,
+    pub network_update_rx: Option<Receiver<NetworkUpdate>>,
     pub refresh_burst: u8,
     pub is_initial_loading: bool,
 }
@@ -318,15 +321,144 @@ impl AppState {
                 .collect();
         }
         // Reset selection if out of bounds
-        if let Some(selected) = self.ui.l_state.selected() {
-            if selected >= self.network.filtered_wifi_list.len() {
+        if let Some(selected) = self.ui.l_state.selected()
+            && selected >= self.network.filtered_wifi_list.len()
+        {
+            self.ui.l_state.select(Some(0));
+        }
+    }
+
+    /// Apply a completed background refresh, preserving the list selection when possible.
+    ///
+    /// Selection is kept by (SSID, BSSID) first, then by SSID alone; it resets to the
+    /// top row only when the selection disappeared or the connection changed.
+    pub fn apply_network_update(
+        &mut self,
+        new_list: Vec<WifiInfo>,
+        connected_ssid: Option<String>,
+    ) {
+        let connection_changed = self.network.connected_ssid != connected_ssid;
+
+        // Try to preserve selection
+        let selected_network = self
+            .ui
+            .l_state
+            .selected()
+            .and_then(|i| self.network.filtered_wifi_list.get(i))
+            .map(|w| (w.ssid.clone(), w.bssid.clone()));
+
+        self.network.wifi_list = new_list;
+        self.network.connected_ssid = connected_ssid;
+        self.update_filtered_list();
+
+        if connection_changed && self.network.connected_ssid.is_some() {
+            self.ui.l_state.select(Some(0));
+        } else if let Some((ssid, bssid)) = selected_network {
+            let position = bssid.as_ref().and_then(|selected_bssid| {
+                self.network
+                    .filtered_wifi_list
+                    .iter()
+                    .position(|w| w.ssid == ssid && w.bssid.as_ref() == Some(selected_bssid))
+            });
+            if let Some(pos) = position.or_else(|| {
+                self.network
+                    .filtered_wifi_list
+                    .iter()
+                    .position(|w| w.ssid == ssid)
+            }) {
+                self.ui.l_state.select(Some(pos));
+            } else {
                 self.ui.l_state.select(Some(0));
             }
+        } else {
+            // No previous selection, select first item
+            self.ui.l_state.select(Some(0));
         }
     }
 
     /// Check if any popup is open (for dimming the background)
     pub fn is_popup_open(&self) -> bool {
         self.ui.show_manual_add_popup || self.ui.show_password_popup || self.ui.show_qr_popup
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wifi(ssid: &str, bssid: Option<&str>) -> WifiInfo {
+        WifiInfo {
+            ssid: ssid.to_string(),
+            bssid: bssid.map(str::to_string),
+            ..WifiInfo::default()
+        }
+    }
+
+    fn state_with(networks: Vec<WifiInfo>) -> AppState {
+        let mut state = AppState::new(networks, false, true);
+        state.update_filtered_list();
+        state
+    }
+
+    #[test]
+    fn selection_preserved_when_network_unchanged() {
+        let mut state = state_with(vec![
+            wifi("a", None),
+            wifi("b", Some("aa:bb")),
+            wifi("c", None),
+        ]);
+        state.ui.l_state.select(Some(1));
+
+        state.apply_network_update(
+            vec![wifi("a", None), wifi("b", Some("aa:bb")), wifi("c", None)],
+            None,
+        );
+
+        assert_eq!(state.ui.l_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn selection_follows_ssid_when_bssid_changes() {
+        let mut state = state_with(vec![wifi("a", None), wifi("b", Some("aa:bb"))]);
+        state.ui.l_state.select(Some(1));
+
+        // "b" roamed to a different access point and moved position.
+        state.apply_network_update(vec![wifi("b", Some("cc:dd")), wifi("a", None)], None);
+
+        assert_eq!(state.ui.l_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn selection_resets_when_connection_changes() {
+        let mut state = state_with(vec![wifi("a", None), wifi("b", None)]);
+        state.ui.l_state.select(Some(1));
+
+        state.apply_network_update(
+            vec![wifi("a", None), wifi("b", None)],
+            Some("a".to_string()),
+        );
+
+        assert_eq!(state.ui.l_state.selected(), Some(0));
+        assert_eq!(state.network.connected_ssid.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn selection_resets_to_top_when_network_disappears() {
+        let mut state = state_with(vec![wifi("a", None), wifi("b", None), wifi("c", None)]);
+        state.ui.l_state.select(Some(2));
+
+        state.apply_network_update(vec![wifi("a", None), wifi("b", None)], None);
+
+        assert_eq!(state.ui.l_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn no_previous_selection_selects_first_row() {
+        let mut state = state_with(vec![wifi("a", None)]);
+
+        state.apply_network_update(vec![wifi("a", None), wifi("b", None)], None);
+
+        assert_eq!(state.ui.l_state.selected(), Some(0));
+        assert_eq!(state.network.wifi_list.len(), 2);
     }
 }

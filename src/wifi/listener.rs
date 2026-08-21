@@ -107,7 +107,7 @@ pub fn start_wifi_listener(sender: UnboundedSender<ConnectionEvent>) -> WifiResu
         );
 
         if result != ERROR_SUCCESS.0 {
-            let _ = Box::from_raw(context as *mut UnboundedSender<ConnectionEvent>); // Cleanup
+            let _ = Box::from_raw(context); // Cleanup
             return Err(WifiError::NotificationRegistrationFailed { code: result });
         }
     }

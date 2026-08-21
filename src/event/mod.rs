@@ -102,114 +102,77 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
             }
         }
 
-        if let Some(rx) = &mut state.connection.listener_init_rx {
-            if let Ok(result) = rx.try_recv() {
-                state.connection.listener_init_rx = None;
-                match result {
-                    Ok(listener) => {
-                        state.connection.wifi_listener = Some(listener);
-                    }
-                    Err(e) => {
-                        state.ui.error_message =
-                            Some(format!("WiFi event listener unavailable: {}", e));
-                    }
+        if let Some(rx) = &mut state.connection.listener_init_rx
+            && let Ok(result) = rx.try_recv()
+        {
+            state.connection.listener_init_rx = None;
+            match result {
+                Ok(listener) => {
+                    state.connection.wifi_listener = Some(listener);
+                }
+                Err(e) => {
+                    state.ui.error_message =
+                        Some(format!("WiFi event listener unavailable: {}", e));
                 }
             }
         }
 
-        if let Some(rx) = &mut state.ui.qr_result_rx {
-            if let Ok(result) = rx.try_recv() {
-                state.ui.qr_result_rx = None;
-                match result {
-                    Ok(qr_lines) => {
-                        state.ui.qr_code_lines = qr_lines;
-                        state.ui.show_qr_popup = true;
-                    }
-                    Err(error) => {
-                        state.ui.error_message =
-                            Some(format!("Could not share secured Wi-Fi network: {error}"));
-                    }
+        if let Some(rx) = &mut state.ui.qr_result_rx
+            && let Ok(result) = rx.try_recv()
+        {
+            state.ui.qr_result_rx = None;
+            match result {
+                Ok(qr_lines) => {
+                    state.ui.qr_code_lines = qr_lines;
+                    state.ui.show_qr_popup = true;
+                }
+                Err(error) => {
+                    state.ui.error_message =
+                        Some(format!("Could not share secured Wi-Fi network: {error}"));
                 }
             }
         }
 
         // Check for connection result
-        if let Some(rx) = &mut state.connection.connection_result_rx {
-            if let Ok((operation_id, result)) = rx.try_recv() {
-                if state.connection.active_operation_id == Some(operation_id) {
-                    state.connection.connection_result_rx = None;
-                    state.connection.active_operation_id = None;
-                    if let Err(e) = result {
-                        let was_connecting = state.connection.is_connecting;
-                        if was_connecting {
-                            state.connection.finish_connection_attempt();
-                        }
-                        state.ui.error_message = Some(if was_connecting {
-                            format!("Failed to connect: {e}")
-                        } else {
-                            format!("Wi-Fi operation failed: {e}")
-                        });
-                    } else {
-                        // Connection initiated successfully, now wait for it to actually connect.
-                        state.refresh.refresh_burst = config::CONNECTION_REFRESH_BURST;
-                    }
-                    start_network_refresh(state);
+        if let Some(rx) = &mut state.connection.connection_result_rx
+            && let Ok((operation_id, result)) = rx.try_recv()
+            && state.connection.active_operation_id == Some(operation_id)
+        {
+            state.connection.connection_result_rx = None;
+            state.connection.active_operation_id = None;
+            if let Err(e) = result {
+                let was_connecting = state.connection.is_connecting;
+                if was_connecting {
+                    state.connection.finish_connection_attempt();
                 }
+                state.ui.error_message = Some(if was_connecting {
+                    format!("Failed to connect: {e}")
+                } else {
+                    format!("Wi-Fi operation failed: {e}")
+                });
+            } else {
+                // Connection initiated successfully, now wait for it to actually connect.
+                state.refresh.refresh_burst = config::CONNECTION_REFRESH_BURST;
             }
+            start_network_refresh(state);
         }
 
         // Check for network updates
-        if let Some(rx) = &mut state.refresh.network_update_rx {
-            if let Ok(result) = rx.try_recv() {
-                match result {
-                    Ok((new_list, connected_ssid)) => {
-                        let connection_changed = state.network.connected_ssid != connected_ssid;
-
-                        // Try to preserve selection
-                        let selected_network = state
-                            .ui
-                            .l_state
-                            .selected()
-                            .and_then(|i| state.network.filtered_wifi_list.get(i))
-                            .map(|w| (w.ssid.clone(), w.bssid.clone()));
-
-                        state.network.wifi_list = new_list;
-                        state.network.connected_ssid = connected_ssid;
-                        state.update_filtered_list();
-
-                        if connection_changed && state.network.connected_ssid.is_some() {
-                            state.ui.l_state.select(Some(0));
-                        } else if let Some((ssid, bssid)) = selected_network {
-                            let position = bssid.as_ref().and_then(|selected_bssid| {
-                                state.network.filtered_wifi_list.iter().position(|w| {
-                                    w.ssid == ssid && w.bssid.as_ref() == Some(selected_bssid)
-                                })
-                            });
-                            if let Some(pos) = position.or_else(|| {
-                                state
-                                    .network
-                                    .filtered_wifi_list
-                                    .iter()
-                                    .position(|w| w.ssid == ssid)
-                            }) {
-                                state.ui.l_state.select(Some(pos));
-                            } else {
-                                state.ui.l_state.select(Some(0));
-                            }
-                        } else {
-                            // No previous selection, select first item
-                            state.ui.l_state.select(Some(0));
-                        }
-                    }
-                    Err(e) => {
-                        state.ui.error_message = Some(format!("Failed to refresh networks: {e}"));
-                    }
+        if let Some(rx) = &mut state.refresh.network_update_rx
+            && let Ok(result) = rx.try_recv()
+        {
+            match result {
+                Ok((new_list, connected_ssid)) => {
+                    state.apply_network_update(new_list, connected_ssid);
                 }
-                state.refresh.is_refreshing_networks = false;
-                state.refresh.is_initial_loading = false;
-                state.refresh.network_update_rx = None;
-                state.refresh.last_refresh = Instant::now();
+                Err(e) => {
+                    state.ui.error_message = Some(format!("Failed to refresh networks: {e}"));
+                }
             }
+            state.refresh.is_refreshing_networks = false;
+            state.refresh.is_initial_loading = false;
+            state.refresh.network_update_rx = None;
+            state.refresh.last_refresh = Instant::now();
         }
 
         // Check for connection events
@@ -285,12 +248,12 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                 }
 
                 // Check for timeout
-                if let Some(start_time) = state.connection.connection_start_time {
-                    if start_time.elapsed() > Duration::from_secs(config::CONNECTION_TIMEOUT_SECS) {
-                        state.connection.finish_connection_attempt();
-                        state.ui.error_message =
-                            Some("Connection timed out (No response from OS)".to_string());
-                    }
+                if let Some(start_time) = state.connection.connection_start_time
+                    && start_time.elapsed() > Duration::from_secs(config::CONNECTION_TIMEOUT_SECS)
+                {
+                    state.connection.finish_connection_attempt();
+                    state.ui.error_message =
+                        Some("Connection timed out (No response from OS)".to_string());
                 }
             } else {
                 // If no target SSID is set but is_connecting is true, check connection result
@@ -317,10 +280,10 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                     state.connection.finish_disconnect_attempt();
                 }
 
-                if let Some(start_time) = state.connection.connection_start_time {
-                    if start_time.elapsed() > Duration::from_secs(config::CONNECTION_TIMEOUT_SECS) {
-                        state.connection.finish_disconnect_attempt();
-                    }
+                if let Some(start_time) = state.connection.connection_start_time
+                    && start_time.elapsed() > Duration::from_secs(config::CONNECTION_TIMEOUT_SECS)
+                {
+                    state.connection.finish_disconnect_attempt();
                 }
             } else if state.connection.connection_result_rx.is_none() {
                 state.connection.finish_disconnect_attempt();

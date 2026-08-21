@@ -170,13 +170,12 @@ pub fn set_auto_connect(ssid: &str, enable: bool) -> WifiResult<()> {
     // WLAN_PROFILE_GET_PLAINTEXT_KEY = 4
     // This flag is needed to get the actual key material so we can set the profile
     // back without triggering reauthentication
-    const WLAN_PROFILE_GET_PLAINTEXT_KEY: u32 = 4;
+    let mut flags = WLAN_PROFILE_GET_PLAINTEXT_KEY;
 
     unsafe {
         let profile_name_wide: Vec<u16> = ssid.encode_utf16().chain(std::iter::once(0)).collect();
         let p_profile_name = PCWSTR(profile_name_wide.as_ptr());
         let mut p_profile_xml = PWSTR::null();
-        let mut flags = WLAN_PROFILE_GET_PLAINTEXT_KEY;
 
         let result = WlanGetProfile(
             handle.as_raw(),
@@ -283,12 +282,14 @@ pub fn get_wifi_password(ssid: &str) -> WifiResult<Option<SecretString>> {
         let xml = p_profile_xml.to_string().unwrap_or_default();
         WlanFreeMemory(p_profile_xml.as_ptr() as *mut _);
 
-        if let Some(start) = xml.find("<keyMaterial>") {
-            if let Some(end) = xml.find("</keyMaterial>") {
-                let password = xml[start + 13..end].to_string();
-                if !password.is_empty() {
-                    return Ok(Some(SecretString::from(password)));
-                }
+        if let Some(start) = xml.find("<keyMaterial>")
+            && let Some(end) = xml.find("</keyMaterial>")
+            // Guard against malformed XML where the closing tag precedes the opening tag
+            && start + "<keyMaterial>".len() <= end
+        {
+            let password = xml[start + "<keyMaterial>".len()..end].to_string();
+            if !password.is_empty() {
+                return Ok(Some(SecretString::from(password)));
             }
         }
 
