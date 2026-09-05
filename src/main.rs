@@ -3,12 +3,13 @@ mod config;
 mod error;
 mod event;
 mod input;
+mod quick_connect;
 mod theme;
 mod ui;
 mod wifi;
 
 use clap::Parser;
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, eyre};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
 use crate::{
@@ -54,11 +55,16 @@ struct Args {
     /// Target a specific Wi-Fi interface (e.g. wlan0, wlan1)
     #[arg(short = 'i', long = "interface")]
     interface: Option<String>,
+
+    /// Search saved Wi-Fi networks and connect without opening the TUI
+    #[arg(index = 1, value_name = "SEARCH_TERM")]
+    search_term: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    color_eyre::install()?;
 
     let mut state = AppState::new(Vec::new(), args.show_keys, args.ascii);
 
@@ -73,6 +79,19 @@ async fn main() -> Result<()> {
     .unwrap_or_else(|error| Some(crate::error::WifiError::Internal(error.to_string())));
     #[cfg(not(target_os = "linux"))]
     let backend_init_error: Option<crate::error::WifiError> = None;
+
+    if let Some(search_term) = args.search_term.as_deref()
+        && !search_term.is_empty()
+    {
+        if !is_backend_available() {
+            let message = backend_init_error
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(backend_unavailable_message);
+            return Err(eyre!(message));
+        }
+        return quick_connect::run(search_term, args.ascii);
+    }
 
     if is_backend_available() {
         let (tx, rx) = tokio::sync::mpsc::channel(1);
@@ -101,7 +120,6 @@ async fn main() -> Result<()> {
         );
     }
 
-    color_eyre::install()?;
     let terminal = ratatui::init();
     enable_raw_mode()?;
     let result = run(terminal, &mut state).await;

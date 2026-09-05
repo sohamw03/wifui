@@ -84,6 +84,14 @@ Run the application:
 wifui
 ```
 
+Connect directly to a saved network using the same partial search behavior as the TUI:
+
+```sh
+wifui 204
+```
+
+If more than one saved network matches, WifUI prints a compact numbered chooser.
+
 ### Command Line Arguments
 
 | Flag | Description |
@@ -91,6 +99,7 @@ wifui
 | `--ascii` | Use ASCII icons (no Nerd Fonts required) |
 | `--show-keys` | Show key logger for debugging |
 | `--backend auto\|nm\|iwd` | Select the Linux D-Bus backend (default: `auto`) |
+| `SEARCH_TERM` | Search saved networks and connect without opening the TUI |
 | `-v`, `--version` | Print version information |
 
 ### Keybindings

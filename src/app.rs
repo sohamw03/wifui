@@ -314,34 +314,19 @@ impl AppState {
         }
     }
 
-    pub fn update_filtered_list(&mut self) {
-        if self.inputs.search_input.value.is_empty() {
-            self.network.filtered_wifi_list = self.network.wifi_list.clone();
-        } else {
-            let search_lower = self.inputs.search_input.value.to_lowercase();
-            self.network.filtered_wifi_list = self
-                .network
-                .wifi_list
-                .iter()
-                .filter(|w| {
-                    let ssid_lower = w.ssid.to_lowercase();
-                    let mut search_chars = search_lower.chars();
-                    let mut search_char = search_chars.next();
+    /// Match a search term as a case-insensitive contiguous substring.
+    pub(crate) fn matches_search(ssid: &str, query: &str) -> bool {
+        ssid.to_lowercase().contains(&query.to_lowercase())
+    }
 
-                    for c in ssid_lower.chars() {
-                        if let Some(sc) = search_char {
-                            if c == sc {
-                                search_char = search_chars.next();
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                    search_char.is_none()
-                })
-                .cloned()
-                .collect();
-        }
+    pub fn update_filtered_list(&mut self) {
+        self.network.filtered_wifi_list = self
+            .network
+            .wifi_list
+            .iter()
+            .filter(|w| Self::matches_search(&w.ssid, &self.inputs.search_input.value))
+            .cloned()
+            .collect();
         // Reset selection if out of bounds
         if let Some(selected) = self.ui.l_state.selected()
             && selected >= self.network.filtered_wifi_list.len()
@@ -482,5 +467,13 @@ mod tests {
 
         assert_eq!(state.ui.l_state.selected(), Some(0));
         assert_eq!(state.network.wifi_list.len(), 2);
+    }
+
+    #[test]
+    fn search_matches_case_insensitive_substrings() {
+        assert!(AppState::matches_search("Home-204", "204"));
+        assert!(!AppState::matches_search("Home-204", "hme2"));
+        assert!(!AppState::matches_search("Home-204", "205"));
+        assert!(AppState::matches_search("Home-204", ""));
     }
 }
