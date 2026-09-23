@@ -5,15 +5,19 @@
 //! same small trait so the rest of the application continues to use the stable
 //! facade in `wifi::mod`.
 
+#[path = "linux_ethernet.rs"]
+mod linux_ethernet;
 #[path = "linux_iwd.rs"]
 mod linux_iwd;
 #[path = "linux_listener.rs"]
 mod linux_listener;
+#[path = "linux_netlink.rs"]
+mod linux_netlink;
 #[path = "linux_network_manager.rs"]
 mod linux_network_manager;
 
 use crate::error::{WifiError, WifiResult};
-use crate::wifi::types::{ConnectionEvent, WifiInfo};
+use crate::wifi::types::{ConnectionEvent, EthernetStatus, WifiInfo};
 use linux_iwd::IwdBackend;
 use linux_network_manager::NetworkManagerBackend;
 use secrecy::SecretString;
@@ -29,6 +33,8 @@ pub(crate) const NETWORK_MANAGER_INTERFACE: &str = "org.freedesktop.NetworkManag
 pub(crate) const NM_DEVICE_INTERFACE: &str = "org.freedesktop.NetworkManager.Device";
 pub(crate) const NM_DEVICE_WIFI_INTERFACE: &str = "org.freedesktop.NetworkManager.Device.Wireless";
 pub(crate) const NM_ACCESS_POINT_INTERFACE: &str = "org.freedesktop.NetworkManager.AccessPoint";
+pub(crate) const NM_ACTIVE_CONNECTION_INTERFACE: &str =
+    "org.freedesktop.NetworkManager.Connection.Active";
 pub(crate) const NM_SETTINGS_PATH: &str = "/org/freedesktop/NetworkManager/Settings";
 pub(crate) const NM_SETTINGS_INTERFACE: &str = "org.freedesktop.NetworkManager.Settings";
 pub(crate) const NM_CONNECTION_INTERFACE: &str =
@@ -350,6 +356,10 @@ pub fn get_connected_ssid() -> WifiResult<Option<String>> {
 
 pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
     active_backend()?.get_wifi_networks()
+}
+
+pub fn get_ethernet_status() -> WifiResult<EthernetStatus> {
+    linux_ethernet::get_status()
 }
 
 pub fn scan_networks() -> WifiResult<()> {

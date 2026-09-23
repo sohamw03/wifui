@@ -50,6 +50,10 @@ pub fn get_wifi_networks() -> WifiResult<Vec<WifiInfo>> {
     unsupported()
 }
 
+pub fn get_ethernet_status() -> WifiResult<crate::wifi::EthernetStatus> {
+    Ok(crate::wifi::EthernetStatus::Unsupported)
+}
+
 pub fn scan_networks() -> WifiResult<()> {
     unsupported()
 }

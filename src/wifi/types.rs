@@ -47,6 +47,23 @@ impl WifiInfo {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum EthernetStatus {
+    #[default]
+    Inactive,
+    Active,
+    Connected,
+    #[allow(dead_code)]
+    Unsupported,
+    Unknown,
+}
+
+impl EthernetStatus {
+    pub fn is_visible(self) -> bool {
+        matches!(self, Self::Active | Self::Connected)
+    }
+}
+
 /// Sort network rows for display: connected first, then saved, then strongest signal,
 /// with the SSID as a final tiebreaker so equal-priority rows stay stable across refreshes.
 pub(crate) fn sort_wifi_infos(list: &mut [WifiInfo]) {
@@ -71,6 +88,15 @@ pub(crate) fn normalize_bssid(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ethernet_status_visibility_matches_display_contract() {
+        assert!(!EthernetStatus::Inactive.is_visible());
+        assert!(EthernetStatus::Active.is_visible());
+        assert!(EthernetStatus::Connected.is_visible());
+        assert!(!EthernetStatus::Unsupported.is_visible());
+        assert!(!EthernetStatus::Unknown.is_visible());
+    }
 
     #[test]
     fn merge_prefers_connected_radio_over_stronger_signal() {

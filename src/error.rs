@@ -79,6 +79,12 @@ pub enum WifiError {
     #[error("Could not find connectionMode in profile XML")]
     ProfileXmlInvalid,
 
+    #[error("Ethernet status query failed during {operation} (code: {code})")]
+    EthernetStatusFailed { operation: String, code: u32 },
+
+    #[error("Ethernet status query failed during {operation}: {reason}")]
+    EthernetStatusQueryFailed { operation: String, reason: String },
+
     #[error("Internal error: {0}")]
     Internal(String),
 }

@@ -14,6 +14,7 @@ pub const OPEN_PROFILE_REGISTRATION_DELAY_MS: u64 = 1000;
 pub const DISCONNECT_DELAY_MS: u64 = 500;
 pub const SCAN_DELAY_MS: u64 = 2000;
 pub const AUTO_REFRESH_INTERVAL_SECS: u64 = 10;
+pub const ETHERNET_STATUS_REFRESH_INTERVAL_SECS: u64 = 5;
 pub const SEARCHING_REFRESH_INTERVAL_SECS: u64 = 15;
 pub const BURST_REFRESH_INTERVAL_SECS: u64 = 1;
 pub const INTERACTION_COOLDOWN_SECS: u64 = 1;
@@ -38,6 +39,7 @@ pub mod icons {
         pub const OPEN: &str = " "; // nf-fa-rss
         pub const LOCKED: &str = " "; // nf-fa-lock
         pub const CONNECTED: &str = " 󰖩"; // nf-md-wifi_check
+        pub const ETHERNET: &str = "󰈀 ";
         pub const AUTO_ON: &str = "󰁪"; // nf-md-bell
         pub const AUTO_OFF: &str = "󱧧"; // nf-md-bell_off
         pub const HIGHLIGHT: &str = "  "; // Two spaces for alignment
@@ -59,6 +61,7 @@ pub mod icons {
         pub const OPEN: &str = "[O] ";
         pub const LOCKED: &str = "[*] ";
         pub const CONNECTED: &str = " <-";
+        pub const ETHERNET: &str = "[E] ";
         pub const AUTO_ON: &str = "(A)";
         pub const AUTO_OFF: &str = "(M)";
         pub const HIGHLIGHT: &str = "> ";
@@ -110,6 +113,13 @@ impl IconSet {
         match self {
             IconSet::Nerd => icons::nerd::CONNECTED,
             IconSet::Ascii => icons::ascii::CONNECTED,
+        }
+    }
+
+    pub fn ethernet(&self) -> &'static str {
+        match self {
+            IconSet::Nerd => icons::nerd::ETHERNET,
+            IconSet::Ascii => icons::ascii::ETHERNET,
         }
     }
 

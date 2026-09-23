@@ -1,6 +1,7 @@
 use crate::app::AppState;
 use crate::config;
 use crate::theme;
+use crate::wifi::EthernetStatus;
 use ratatui::{
     prelude::*,
     widgets::{
@@ -96,6 +97,58 @@ fn centered_main_area(area: Rect) -> Rect {
     horizontal_layout[1]
 }
 
+fn bottom_status_line(
+    state: &AppState,
+    width: u16,
+    is_dimmed: bool,
+    border_style: Style,
+) -> Line<'static> {
+    let backend = format!(" {} ", crate::wifi::backend_name());
+    if !state.network.ethernet_status.is_visible() {
+        return Line::from(Span::styled(backend, border_style)).right_aligned();
+    }
+
+    let status = match state.network.ethernet_status {
+        EthernetStatus::Active => Some((
+            format!(" {}Active ", state.ui.icon_set.ethernet()),
+            if is_dimmed {
+                Style::default().fg(theme::DIMMED)
+            } else {
+                Style::default()
+                    .fg(theme::BLUE)
+                    .add_modifier(Modifier::BOLD)
+            },
+        )),
+        EthernetStatus::Connected => Some((
+            format!(" {}Connected ", state.ui.icon_set.ethernet()),
+            if is_dimmed {
+                Style::default().fg(theme::DIMMED)
+            } else {
+                Style::default()
+                    .fg(theme::GREEN)
+                    .add_modifier(Modifier::BOLD)
+            },
+        )),
+        _ => None,
+    };
+
+    let Some((status_text, status_style)) = status else {
+        return Line::from(Span::styled(backend, border_style)).right_aligned();
+    };
+
+    let available_width = usize::from(width.saturating_sub(2));
+    let status_line = Line::from(Span::styled(status_text.clone(), status_style));
+    let backend_line = Line::from(Span::styled(backend.clone(), border_style));
+    let gap = available_width.saturating_sub(status_line.width() + backend_line.width());
+
+    Line::from(vec![
+        Span::styled(status_text, status_style),
+        Span::styled("─".repeat(gap), border_style),
+        Span::styled(backend, border_style),
+    ])
+    .left_aligned()
+}
+
 /// Compute the visible substring of a single-line input and the on-screen cursor column,
 /// scrolling the viewport so the cursor stays within `max_width` columns.
 fn scrolled_input_view(text: &str, cursor_pos: usize, max_width: usize) -> (String, usize) {
@@ -189,13 +242,12 @@ pub fn render(frame: &mut Frame, state: &mut AppState) -> LayoutAreas {
             ))
             .centered(),
         )
-        .title_bottom(
-            Line::from(Span::styled(
-                format!(" {} ", crate::wifi::backend_name()),
-                border_style,
-            ))
-            .right_aligned(),
-        );
+        .title_bottom(bottom_status_line(
+            state,
+            main_area.width,
+            is_dimmed,
+            border_style,
+        ));
 
     frame.render_widget(main_block, main_area);
 
@@ -1210,6 +1262,60 @@ fn render_qr_popup(frame: &mut Frame, area: Rect, state: &AppState, areas: &mut 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bottom_status_line_uses_ascii_active_badge() {
+        let mut state = AppState::new(vec![], false, true);
+        state.network.ethernet_status = EthernetStatus::Active;
+
+        let line = bottom_status_line(&state, 77, false, Style::default());
+
+        assert_eq!(line.spans[0].content.as_ref(), " [E] Active ");
+        assert_eq!(line.spans[0].style.fg, Some(theme::BLUE));
+    }
+
+    #[test]
+    fn bottom_status_line_uses_nerd_ethernet_badge() {
+        let mut state = AppState::new(vec![], false, false);
+        state.network.ethernet_status = EthernetStatus::Connected;
+
+        let line = bottom_status_line(&state, 77, false, Style::default());
+
+        assert_eq!(line.spans[0].content.as_ref(), " 󰈀 Connected ");
+    }
+
+    #[test]
+    fn bottom_status_line_uses_green_connected_badge() {
+        let mut state = AppState::new(vec![], false, true);
+        state.network.ethernet_status = EthernetStatus::Connected;
+
+        let line = bottom_status_line(&state, 77, false, Style::default().fg(theme::DIMMED));
+
+        assert_eq!(line.spans[0].content.as_ref(), " [E] Connected ");
+        assert_eq!(line.spans[0].style.fg, Some(theme::GREEN));
+        assert!(!line.spans[1].content.is_empty());
+        assert!(
+            line.spans[1]
+                .content
+                .chars()
+                .all(|character| character == '─')
+        );
+        assert_eq!(line.spans[1].style.fg, Some(theme::DIMMED));
+    }
+
+    #[test]
+    fn bottom_status_line_hides_inactive_ethernet_badge() {
+        let state = AppState::new(vec![], false, true);
+
+        let line = bottom_status_line(&state, 77, false, Style::default());
+
+        assert_eq!(line.alignment, Some(Alignment::Right));
+        assert!(
+            !line.spans.iter().any(|span| {
+                span.content.contains("Active") || span.content.contains("Connected")
+            })
+        );
+    }
 
     #[test]
     fn spinner_chars_wrap_around() {

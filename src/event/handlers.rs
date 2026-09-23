@@ -1,3 +1,4 @@
+use super::start_ethernet_refresh;
 use crate::app::{AppState, PointerShape};
 use crate::config;
 use crate::error::WifiError;
@@ -329,6 +330,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
             }
             state.refresh.last_manual_refresh = Instant::now();
             state.refresh.is_refreshing_networks = true;
+            start_ethernet_refresh(state);
             let (tx, rx) = mpsc::channel(1);
             state.refresh.network_update_rx = Some(rx);
 

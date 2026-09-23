@@ -10,8 +10,8 @@ use crate::{
     error::WifiError,
     ui::{LayoutAreas, render},
     wifi::{
-        ConnectionEvent, get_connected_ssid, get_wifi_networks, is_backend_available,
-        start_wifi_listener,
+        ConnectionEvent, EthernetStatus, get_connected_ssid, get_ethernet_status,
+        get_wifi_networks, is_backend_available, start_wifi_listener,
     },
 };
 use color_eyre::eyre::{Result, eyre};
@@ -53,6 +53,25 @@ fn start_network_refresh(state: &mut AppState) {
     });
 }
 
+pub(crate) fn start_ethernet_refresh(state: &mut AppState) {
+    if state.refresh.is_refreshing_ethernet {
+        return;
+    }
+
+    state.refresh.is_refreshing_ethernet = true;
+    let (tx, rx) = mpsc::channel(1);
+    state.refresh.ethernet_status_rx = Some(rx);
+
+    tokio::spawn(async move {
+        let result = tokio::task::spawn_blocking(get_ethernet_status).await;
+        let result = match result {
+            Ok(inner) => inner,
+            Err(error) => Err(WifiError::Internal(error.to_string())),
+        };
+        let _ = tx.send(result).await;
+    });
+}
+
 impl Drop for CursorStyleGuard {
     fn drop(&mut self) {
         let _ = reset_pointer_shape();
@@ -64,6 +83,8 @@ impl Drop for CursorStyleGuard {
 pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<()> {
     // Ensure the terminal cursor shape is restored on exit.
     let _cursor_style_guard = CursorStyleGuard;
+
+    start_ethernet_refresh(state);
 
     // Set cursor style to blinking block while the app is active.
     crossterm::execute!(std::io::stdout(), SetCursorStyle::BlinkingBlock)?;
@@ -156,6 +177,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                 state.refresh.refresh_burst = config::CONNECTION_REFRESH_BURST;
             }
             start_network_refresh(state);
+            start_ethernet_refresh(state);
         }
 
         // Check for network updates
@@ -174,6 +196,18 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
             state.refresh.is_initial_loading = false;
             state.refresh.network_update_rx = None;
             state.refresh.last_refresh = Instant::now();
+        }
+
+        if let Some(rx) = &mut state.refresh.ethernet_status_rx
+            && let Ok(result) = rx.try_recv()
+        {
+            state.network.ethernet_status = match result {
+                Ok(status) => status,
+                Err(_) => EthernetStatus::Unknown,
+            };
+            state.refresh.is_refreshing_ethernet = false;
+            state.refresh.ethernet_status_rx = None;
+            state.refresh.last_ethernet_refresh = Instant::now();
         }
 
         // Check for connection events
@@ -195,6 +229,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                         state.connection.finish_connection_attempt();
                     }
                     state.refresh.refresh_burst = config::DISCONNECT_REFRESH_BURST;
+                    start_ethernet_refresh(state);
                 }
                 ConnectionEvent::Disconnected => {
                     state.connection.finish_disconnect_attempt();
@@ -204,6 +239,7 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                     }
                     state.update_filtered_list();
                     state.refresh.refresh_burst = config::DISCONNECT_REFRESH_BURST;
+                    start_ethernet_refresh(state);
                 }
                 ConnectionEvent::Failed {
                     ssid, reason_str, ..
@@ -313,6 +349,13 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                 state.refresh.refresh_burst -= 1;
             }
             start_network_refresh(state);
+        }
+
+        if !state.refresh.is_refreshing_ethernet
+            && state.refresh.last_ethernet_refresh.elapsed()
+                >= Duration::from_secs(config::ETHERNET_STATUS_REFRESH_INTERVAL_SECS)
+        {
+            start_ethernet_refresh(state);
         }
 
         if event::poll(Duration::from_millis(config::EVENT_POLL_MS))? {

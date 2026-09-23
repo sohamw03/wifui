@@ -1,7 +1,8 @@
 use crate::{
     config::{self, IconSet},
+    error::WifiResult,
     input::InputState,
-    wifi::{ConnectionEvent, WifiInfo, WifiListener},
+    wifi::{ConnectionEvent, EthernetStatus, WifiInfo, WifiListener},
 };
 use color_eyre::eyre::Result;
 use ratatui::widgets::ListState;
@@ -14,6 +15,7 @@ pub struct NetworkState {
     pub wifi_list: Vec<WifiInfo>,
     pub filtered_wifi_list: Vec<WifiInfo>,
     pub connected_ssid: Option<String>,
+    pub ethernet_status: EthernetStatus,
 }
 
 impl NetworkState {
@@ -22,6 +24,7 @@ impl NetworkState {
             filtered_wifi_list: wifi_list.clone(),
             wifi_list,
             connected_ssid: None,
+            ethernet_status: EthernetStatus::Inactive,
         }
     }
 }
@@ -188,6 +191,7 @@ impl InputStates {
 
 /// Payload sent back to the event loop when a background network refresh finishes.
 pub type NetworkUpdate = Result<(Vec<WifiInfo>, Option<String>)>;
+pub type EthernetUpdate = WifiResult<EthernetStatus>;
 
 /// Refresh and timing state
 #[derive(Debug)]
@@ -197,6 +201,9 @@ pub struct RefreshState {
     pub last_manual_refresh: Instant,
     pub is_refreshing_networks: bool,
     pub network_update_rx: Option<Receiver<NetworkUpdate>>,
+    pub is_refreshing_ethernet: bool,
+    pub ethernet_status_rx: Option<Receiver<EthernetUpdate>>,
+    pub last_ethernet_refresh: Instant,
     pub refresh_burst: u8,
     pub is_initial_loading: bool,
 }
@@ -209,6 +216,9 @@ impl RefreshState {
             last_manual_refresh: Instant::now() - Duration::from_secs(15), // Allow immediate manual refresh
             is_refreshing_networks: false,
             network_update_rx: None,
+            is_refreshing_ethernet: false,
+            ethernet_status_rx: None,
+            last_ethernet_refresh: Instant::now() - Duration::from_secs(15),
             refresh_burst: config::STARTUP_REFRESH_BURST,
             is_initial_loading: true,
         }
@@ -327,10 +337,19 @@ impl AppState {
             .filter(|w| Self::matches_search(&w.ssid, &self.inputs.search_input.value))
             .cloned()
             .collect();
-        // Reset selection if out of bounds
-        if let Some(selected) = self.ui.l_state.selected()
+        if self.network.filtered_wifi_list.is_empty() {
+            self.ui.l_state.select(None);
+        } else if let Some(selected) = self.ui.l_state.selected()
             && selected >= self.network.filtered_wifi_list.len()
         {
+            self.ui.l_state.select(Some(0));
+        }
+    }
+
+    fn select_first_network(&mut self) {
+        if self.network.filtered_wifi_list.is_empty() {
+            self.ui.l_state.select(None);
+        } else {
             self.ui.l_state.select(Some(0));
         }
     }
@@ -359,7 +378,7 @@ impl AppState {
         self.update_filtered_list();
 
         if connection_changed && self.network.connected_ssid.is_some() {
-            self.ui.l_state.select(Some(0));
+            self.select_first_network();
         } else if let Some((ssid, bssid)) = selected_network {
             let position = bssid.as_ref().and_then(|selected_bssid| {
                 self.network
@@ -375,11 +394,10 @@ impl AppState {
             }) {
                 self.ui.l_state.select(Some(pos));
             } else {
-                self.ui.l_state.select(Some(0));
+                self.select_first_network();
             }
         } else {
-            // No previous selection, select first item
-            self.ui.l_state.select(Some(0));
+            self.select_first_network();
         }
     }
 
@@ -457,6 +475,15 @@ mod tests {
         state.apply_network_update(vec![wifi("a", None), wifi("b", None)], None);
 
         assert_eq!(state.ui.l_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn empty_wifi_list_clears_selection() {
+        let mut state = state_with(vec![]);
+
+        state.apply_network_update(vec![], None);
+
+        assert_eq!(state.ui.l_state.selected(), None);
     }
 
     #[test]
