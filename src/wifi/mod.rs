@@ -56,6 +56,7 @@ pub use unsupported::{
 };
 
 pub use types::{ConnectionEvent, EthernetStatus, WifiInfo};
+pub(crate) use types::{congestion_label, networks_on_channel};
 
 /// Whether the current target has a functional Wi-Fi backend.
 pub fn is_backend_available() -> bool {

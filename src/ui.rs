@@ -2,6 +2,7 @@ use crate::app::AppState;
 use crate::config;
 use crate::theme;
 use crate::wifi::EthernetStatus;
+use crate::wifi::{congestion_label, networks_on_channel};
 use ratatui::{
     prelude::*,
     widgets::{
@@ -657,6 +658,36 @@ fn render_network_list(
     }
 }
 
+fn congestion_span(
+    state: &AppState,
+    wifi: &crate::wifi::WifiInfo,
+    is_dimmed: bool,
+) -> Span<'static> {
+    if wifi.channel == 0 {
+        return Span::raw("");
+    }
+    let count = networks_on_channel(&state.network.wifi_list, wifi.channel);
+    let grade = congestion_label(count);
+    let color = if is_dimmed {
+        theme::DIMMED
+    } else {
+        match grade {
+            "clear" => theme::GREEN,
+            "moderate" => theme::YELLOW,
+            _ => theme::RED,
+        }
+    };
+    Span::styled(
+        format!(
+            " · {} {}, {}",
+            count,
+            if count == 1 { "network" } else { "networks" },
+            grade
+        ),
+        Style::default().fg(color),
+    )
+}
+
 fn render_details_panel(frame: &mut Frame, details_area: Rect, state: &AppState, is_dimmed: bool) {
     let icons = state.ui.icon_set;
 
@@ -784,6 +815,7 @@ fn render_details_panel(frame: &mut Frame, details_area: Rect, state: &AppState,
             Line::from(vec![
                 label("Channel"),
                 Span::styled(channel_text, value_style),
+                congestion_span(state, wifi, is_dimmed),
             ]),
         ];
 

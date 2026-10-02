@@ -77,6 +77,20 @@ pub(crate) fn sort_wifi_infos(list: &mut [WifiInfo]) {
     });
 }
 
+/// Count how many networks (including the given one) share the same channel.
+pub(crate) fn networks_on_channel(list: &[WifiInfo], channel: u32) -> usize {
+    list.iter().filter(|w| w.channel == channel).count()
+}
+
+/// Human-friendly congestion grade for a channel occupancy count.
+pub(crate) fn congestion_label(count: usize) -> &'static str {
+    match count {
+        0 | 1 => "clear",
+        2 | 3 => "moderate",
+        _ => "busy",
+    }
+}
+
 /// Normalize a hardware address string to lowercase without surrounding whitespace.
 /// Returns `None` for empty addresses.
 #[cfg(target_os = "linux")]
@@ -232,6 +246,25 @@ mod tests {
 
         let ssids: Vec<&str> = list.iter().map(|w| w.ssid.as_str()).collect();
         assert_eq!(ssids, vec!["alpha", "zeta"]);
+    }
+
+    #[test]
+    fn channel_occupancy_counts_networks_on_same_channel() {
+        let ch = |channel: u32| WifiInfo {
+            channel,
+            ..WifiInfo::default()
+        };
+        let list = vec![ch(6), ch(6), ch(1), ch(6), ch(11)];
+        assert_eq!(networks_on_channel(&list, 6), 3);
+        assert_eq!(networks_on_channel(&list, 1), 1);
+        assert_eq!(networks_on_channel(&list, 36), 0);
+    }
+
+    #[test]
+    fn congestion_labels_grade_occupancy() {
+        assert_eq!(congestion_label(1), "clear");
+        assert_eq!(congestion_label(3), "moderate");
+        assert_eq!(congestion_label(4), "busy");
     }
 
     #[test]
