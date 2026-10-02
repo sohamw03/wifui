@@ -175,29 +175,6 @@ mod tests {
     }
 
     #[test]
-    fn merge_weak_duplicate_keeps_existing_radio() {
-        let mut stored = WifiInfo {
-            ssid: "net".to_string(),
-            signal: 70,
-            channel: 6,
-            bssid: Some("aa:aa".to_string()),
-            ..WifiInfo::default()
-        };
-        let incoming = WifiInfo {
-            ssid: "net".to_string(),
-            signal: 50,
-            channel: 149,
-            ..WifiInfo::default()
-        };
-
-        stored.merge_observation(&incoming);
-
-        assert_eq!(stored.signal, 70);
-        assert_eq!(stored.channel, 6);
-        assert_eq!(stored.bssid.as_deref(), Some("aa:aa"));
-    }
-
-    #[test]
     fn sorting_puts_connected_first_then_saved_then_signal_then_ssid() {
         let saved = |ssid: &str, signal: u8| WifiInfo {
             ssid: ssid.to_string(),

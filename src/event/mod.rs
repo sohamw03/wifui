@@ -144,8 +144,9 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
         {
             state.ui.qr_result_rx = None;
             match result {
-                Ok(qr_lines) => {
+                Ok((qr_lines, password)) => {
                     state.ui.qr_code_lines = qr_lines;
+                    state.ui.qr_password = password;
                     state.ui.show_qr_popup = true;
                 }
                 Err(error) => {
@@ -405,6 +406,9 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
                     // Clear error message on any key press
                     if state.ui.error_message.is_some() {
                         state.ui.error_message = None;
+                    }
+                    if state.ui.notice_message.is_some() {
+                        state.ui.notice_message = None;
                     }
 
                     // Global shortcuts

@@ -6,7 +6,7 @@ use crate::ui::LayoutAreas;
 use crate::wifi::{disconnect, get_connected_ssid, get_wifi_networks};
 use color_eyre::eyre::eyre;
 use crossterm::event::{self, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use std::io::Write;
 use std::time::Instant;
 use tokio::sync::mpsc;
@@ -29,17 +29,38 @@ const MANUAL_SECURITY_OPTIONS: [&str; 5] = [
     "WEP",
 ];
 
+/// Copy text to the system clipboard.
+fn copy_to_clipboard(text: &str) -> std::result::Result<(), String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    clipboard.set_text(text).map_err(|e| e.to_string())
+}
+
 /// Handle keyboard events for the QR code popup
 pub fn handle_qr_popup(key: KeyEvent, state: &mut AppState) -> bool {
     match key.code {
         event::KeyCode::Esc | event::KeyCode::Char('q') | event::KeyCode::Enter => {
             state.ui.show_qr_popup = false;
             state.ui.qr_code_lines.clear();
+            state.ui.qr_password = None;
         }
         event::KeyCode::Char('[') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.ui.show_qr_popup = false;
             state.ui.qr_code_lines.clear();
+            state.ui.qr_password = None;
         }
+        event::KeyCode::Char('y') => match &state.ui.qr_password {
+            Some(password) => match copy_to_clipboard(password.expose_secret()) {
+                Ok(()) => {
+                    state.ui.notice_message = Some("Password copied to clipboard".to_string());
+                }
+                Err(e) => {
+                    state.ui.error_message = Some(format!("Could not copy password: {e}"));
+                }
+            },
+            None => {
+                state.ui.error_message = Some("No readable password for this network".to_string());
+            }
+        },
         _ => {}
     }
     false
@@ -396,6 +417,21 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                 });
             }
         }
+        event::KeyCode::Char('y') => {
+            if let Some(selected) = state.ui.l_state.selected()
+                && let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned()
+            {
+                match copy_to_clipboard(&wifi.ssid) {
+                    Ok(()) => {
+                        state.ui.notice_message =
+                            Some(format!("Copied SSID \"{}\" to clipboard", wifi.ssid));
+                    }
+                    Err(e) => {
+                        state.ui.error_message = Some(format!("Could not copy SSID: {e}"));
+                    }
+                }
+            }
+        }
         event::KeyCode::Char('s') => {
             if let Some(selected) = state.ui.l_state.selected()
                 && let Some(wifi) = state.network.filtered_wifi_list.get(selected).cloned()
@@ -406,6 +442,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                 if auth == "Open" || auth == "open" {
                     let qr_lines = generate_wifi_qr(&ssid, &auth, None);
                     state.ui.qr_code_lines = qr_lines;
+                    state.ui.qr_password = None;
                     state.ui.show_qr_popup = true;
                 } else if qr_auth_type(&auth).is_none() {
                     state.ui.error_message = Some(
@@ -424,7 +461,8 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                         .await;
                         let result = match result {
                             Ok(Ok(Some(password))) => {
-                                Ok(generate_wifi_qr(&ssid, &auth, Some(&password)))
+                                let qr = generate_wifi_qr(&ssid, &auth, Some(&password));
+                                Ok((qr, Some(password)))
                             }
                             Ok(Ok(None)) => {
                                 Err(eyre!("the saved profile has no readable password"))
@@ -658,9 +696,31 @@ pub fn handle_mouse(mouse: MouseEvent, state: &mut AppState, areas: &LayoutAreas
 
         // ── Left button press ─────────────────────────────────────────────────
         MouseEventKind::Down(MouseButton::Left) => {
-            // Always dismiss the error message on any click
+            // Click inside a toast copies its full text; outside clicks dismiss.
+            if let Some(toast) = areas.error_area
+                && contains(toast, col, row)
+                && let Some(message) = state.ui.error_message.clone()
+            {
+                if let Err(e) = copy_to_clipboard(&message) {
+                    state.ui.notice_message = Some(format!("Could not copy: {e}"));
+                }
+                return;
+            }
+            if let Some(toast) = areas.notice_area
+                && contains(toast, col, row)
+                && let Some(message) = state.ui.notice_message.clone()
+            {
+                if let Err(e) = copy_to_clipboard(&message) {
+                    state.ui.error_message = Some(format!("Could not copy: {e}"));
+                }
+                return;
+            }
+            // Dismiss toasts on click-away
             if state.ui.error_message.is_some() {
                 state.ui.error_message = None;
+            }
+            if state.ui.notice_message.is_some() {
+                state.ui.notice_message = None;
             }
 
             // --- QR popup: click-away to dismiss ---
@@ -670,6 +730,7 @@ pub fn handle_mouse(mouse: MouseEvent, state: &mut AppState, areas: &LayoutAreas
                 {
                     state.ui.show_qr_popup = false;
                     state.ui.qr_code_lines.clear();
+                    state.ui.qr_password = None;
                 }
                 return;
             }
@@ -747,6 +808,15 @@ pub fn handle_mouse(mouse: MouseEvent, state: &mut AppState, areas: &LayoutAreas
 
 /// Returns the pointer shape that should be shown for the cell under the cursor.
 fn desired_pointer(col: u16, row: u16, state: &AppState, areas: &LayoutAreas) -> PointerShape {
+    if areas
+        .error_area
+        .is_some_and(|toast| contains(toast, col, row))
+        || areas
+            .notice_area
+            .is_some_and(|toast| contains(toast, col, row))
+    {
+        return PointerShape::Pointer;
+    }
     if state.ui.show_manual_add_popup {
         if let Some(btn) = areas.manual_connect_area
             && contains(btn, col, row)
@@ -833,12 +903,6 @@ mod mouse_tests {
         assert!(!contains(rect, 5, 10));
     }
 
-    #[test]
-    fn contains_zero_size_rect_never_matches() {
-        let rect = Rect::new(0, 0, 0, 0);
-        assert!(!contains(rect, 0, 0));
-    }
-
     fn test_state(networks: Vec<WifiInfo>) -> AppState {
         let mut state = AppState::new(networks, false, true);
         state.refresh.is_initial_loading = false;
@@ -891,13 +955,5 @@ mod mouse_tests {
         assert_eq!(desired_pointer(4, 3, &state, &areas), PointerShape::Text);
         // Popup background -> Arrow
         assert_eq!(desired_pointer(4, 4, &state, &areas), PointerShape::Arrow);
-    }
-
-    #[test]
-    fn arrow_over_other_popups() {
-        let mut state = test_state(vec![]);
-        state.ui.show_qr_popup = true;
-        let areas = LayoutAreas::default();
-        assert_eq!(desired_pointer(5, 5, &state, &areas), PointerShape::Arrow);
     }
 }

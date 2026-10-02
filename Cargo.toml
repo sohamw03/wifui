@@ -17,6 +17,7 @@ license = false
 eula = false
 
 [dependencies]
+arboard = "3.6"
 clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
 color-eyre = { version = "0.6.5", default-features = false }
 crossterm = { version = "0.29.0", default-features = false, features = ["events", "windows"] }

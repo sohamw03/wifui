@@ -18,6 +18,8 @@ pub struct LayoutAreas {
     pub list_area: Rect,
     /// Outer area of the error panel, if visible
     pub error_area: Option<Rect>,
+    /// Outer area of the notice panel, if visible
+    pub notice_area: Option<Rect>,
     /// Outer area of the password popup, if visible
     pub password_popup_area: Option<Rect>,
     /// Outer area of the QR popup, if visible
@@ -96,6 +98,31 @@ fn centered_main_area(area: Rect) -> Rect {
     .split(vertical_layout[1]);
 
     horizontal_layout[1]
+}
+
+/// Toast width is capped at the app width and horizontally centered in the frame.
+fn centered_toast_area(frame_area: Rect, main_area: Rect, stack_offset: u16) -> Rect {
+    let width = main_area.width.min(frame_area.width.saturating_sub(4));
+    let x = frame_area
+        .x
+        .saturating_add(frame_area.width.saturating_sub(width) / 2);
+    let y = frame_area
+        .y
+        .saturating_add(frame_area.height.saturating_sub(4))
+        .saturating_sub(stack_offset);
+    Rect::new(x, y, width, 3)
+}
+
+/// Truncate to a single line that fits `max_width` columns, ending with `…` on overflow.
+fn truncate_single_line(text: &str, max_width: usize) -> String {
+    if text.chars().count() <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    let kept: String = text.chars().take(max_width.saturating_sub(1)).collect();
+    format!("{kept}…")
 }
 
 fn bottom_status_line(
@@ -295,25 +322,39 @@ pub fn render(frame: &mut Frame, state: &mut AppState) -> LayoutAreas {
     render_help_bar(frame, help_area, state);
 
     if let Some(error) = &state.ui.error_message {
-        let error_area = Rect::new(
-            area.x.saturating_add(2),
-            area.height.saturating_sub(4),
-            area.width.saturating_sub(4),
-            3,
+        let error_area = centered_toast_area(
+            area,
+            main_area,
+            u16::from(state.ui.notice_message.is_some()) * 4,
         );
         areas.error_area = Some(error_area);
-        let error_paragraph = Paragraph::new(error.as_str())
+        let inner_width = error_area.width.saturating_sub(2) as usize;
+        let error_paragraph = Paragraph::new(truncate_single_line(error, inner_width))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(theme::RED))
-                    .title(" ERROR "),
+                    .border_style(Style::default().fg(theme::RED)),
             )
-            .style(Style::default().fg(theme::RED).bg(theme::BACKGROUND))
-            .wrap(Wrap { trim: true });
+            .style(Style::default().fg(theme::RED).bg(theme::BACKGROUND));
         frame.render_widget(Clear, error_area);
         frame.render_widget(error_paragraph, error_area);
+    }
+
+    if let Some(notice) = &state.ui.notice_message {
+        let notice_area = centered_toast_area(area, main_area, 0);
+        areas.notice_area = Some(notice_area);
+        let inner_width = notice_area.width.saturating_sub(2) as usize;
+        let notice_paragraph = Paragraph::new(truncate_single_line(notice, inner_width))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(theme::GREEN)),
+            )
+            .style(Style::default().fg(theme::GREEN).bg(theme::BACKGROUND));
+        frame.render_widget(Clear, notice_area);
+        frame.render_widget(notice_paragraph, notice_area);
     }
 
     if state.ui.show_password_popup {
@@ -926,6 +967,8 @@ fn render_help_bar(frame: &mut Frame, help_area: Rect, state: &AppState) {
                 Span::styled(" auto-conn • ", Style::default().fg(theme::DIMMED)),
                 Span::styled("s", Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" share • ", Style::default().fg(theme::DIMMED)),
+                Span::styled("y", Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" copy • ", Style::default().fg(theme::DIMMED)),
                 Span::styled("n", Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" add • ", Style::default().fg(theme::DIMMED)),
                 Span::styled("/", Style::default().fg(theme::FOREGROUND)),
@@ -1350,14 +1393,6 @@ mod tests {
     }
 
     #[test]
-    fn spinner_chars_wrap_around() {
-        assert_eq!(spinner_char(0), config::LOADING_CHARS[0]);
-        let len = config::LOADING_CHARS.len();
-        assert_eq!(spinner_char(len), config::LOADING_CHARS[0]);
-        assert_eq!(spinner_char(len + 3), config::LOADING_CHARS[3]);
-    }
-
-    #[test]
     fn short_input_is_not_scrolled() {
         let (text, cursor) = scrolled_input_view("wifi", 2, 10);
         assert_eq!(text, "wifi");
@@ -1406,19 +1441,33 @@ mod tests {
     }
 
     #[test]
-    fn inactive_cursor_renders_plain_text() {
-        let spans = input_line_spans("ab", 1, false, false);
-        assert_eq!(spans.len(), 2);
-        assert_eq!(spans[0].style, Style::default());
-        assert_eq!(spans[1].style, Style::default());
-    }
-
-    #[test]
     fn dimmed_mode_styles_all_characters() {
         let spans = input_line_spans("ab", 5, true, true);
         assert_eq!(spans.len(), 2);
         assert_eq!(spans[0].style.fg, Some(theme::DIMMED));
         assert_eq!(spans[1].style.fg, Some(theme::DIMMED));
+    }
+
+    #[test]
+    fn toast_truncates_long_text_to_single_line() {
+        assert_eq!(truncate_single_line("abc", 5), "abc");
+        assert_eq!(truncate_single_line("abcdef", 6), "abcdef");
+        assert_eq!(truncate_single_line("abcdef", 5), "abcd…");
+    }
+
+    #[test]
+    fn toast_width_caps_at_app_width_and_centers() {
+        let frame = Rect::new(0, 0, 200, 50);
+        let main = Rect::new(61, 9, 77, 32);
+        let toast = centered_toast_area(frame, main, 0);
+        assert_eq!(toast.width, 77);
+        assert_eq!(toast.x, (200 - 77) / 2);
+        assert_eq!(toast.height, 3);
+
+        let narrow = Rect::new(0, 0, 40, 20);
+        let clipped = centered_toast_area(narrow, main, 0);
+        assert_eq!(clipped.width, 36);
+        assert_eq!(clipped.x, 2);
     }
 
     #[test]

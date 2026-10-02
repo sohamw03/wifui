@@ -106,7 +106,9 @@ pub fn run(search_term: &str, use_ascii_icons: bool) -> Result<()> {
         draw_rows(&mut terminal, &rows, 0, icon_set, RowStatus::Normal, 0)?;
     }
 
-    move_cursor_after_rows(&mut terminal)?;
+    // Leave the cursor on a fresh line below the rows before exiting inline mode.
+    execute!(terminal.backend_mut(), MoveToColumn(0), MoveDown(1), Show)?;
+    terminal.backend_mut().flush()?;
     Ok(())
 }
 
@@ -530,12 +532,6 @@ fn render_rows(
         );
     }
     frame.render_stateful_widget(list, area, &mut list_state);
-}
-
-fn move_cursor_after_rows(terminal: &mut DefaultTerminal) -> Result<()> {
-    execute!(terminal.backend_mut(), MoveToColumn(0), MoveDown(1), Show)?;
-    terminal.backend_mut().flush()?;
-    Ok(())
 }
 
 #[cfg(test)]

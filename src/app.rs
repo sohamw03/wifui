@@ -6,6 +6,7 @@ use crate::{
 };
 use color_eyre::eyre::Result;
 use ratatui::widgets::ListState;
+use secrecy::SecretString;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender};
 
@@ -38,8 +39,11 @@ pub struct UiState {
     pub show_manual_add_popup: bool,
     pub show_qr_popup: bool,
     pub qr_code_lines: Vec<String>,
-    pub qr_result_rx: Option<Receiver<Result<Vec<String>>>>,
+    pub qr_result_rx: Option<Receiver<QrUpdate>>,
+    /// Password backing the current secured-network QR code, when readable.
+    pub qr_password: Option<SecretString>,
     pub error_message: Option<String>,
+    pub notice_message: Option<String>,
     pub loading_frame: usize,
     pub show_key_logger: bool,
     pub last_key_press: Option<(String, Instant)>,
@@ -56,7 +60,9 @@ impl UiState {
             show_qr_popup: false,
             qr_code_lines: Vec::new(),
             qr_result_rx: None,
+            qr_password: None,
             error_message: None,
+            notice_message: None,
             loading_frame: 0,
             show_key_logger,
             last_key_press: None,
@@ -192,6 +198,8 @@ impl InputStates {
 /// Payload sent back to the event loop when a background network refresh finishes.
 pub type NetworkUpdate = Result<(Vec<WifiInfo>, Option<String>)>;
 pub type EthernetUpdate = WifiResult<EthernetStatus>;
+/// QR lines plus the readable password backing a secured-network QR, if any.
+pub type QrUpdate = Result<(Vec<String>, Option<SecretString>)>;
 
 /// Refresh and timing state
 #[derive(Debug)]
