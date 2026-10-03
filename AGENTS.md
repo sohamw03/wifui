@@ -73,13 +73,15 @@ The normal runtime flow is:
 | `src/config.rs` | UI dimensions, timing constants, refresh burst sizes, and icons |
 | `src/error.rs` | `WifiError`, `WifiResult`, and Windows WLAN reason-code formatting |
 | `src/event/mod.rs` | Main async event loop, background task result handling, listener setup |
-| `src/event/handlers.rs` | Keyboard handlers, connection/profile actions, search, and QR generation |
+| `src/event/handlers.rs` | Keyboard handlers, connection/profile actions, search, QR generation, and clipboard copy |
 | `src/input.rs` | Editable input state and cursor/word navigation |
+| `src/quick_connect.rs` | Non-interactive saved-network matching and inline connect/disconnect flow |
 | `src/ui.rs` | Ratatui rendering split into per-panel functions (list, details, popups) with shared input-scrolling and spinner helpers |
 | `src/theme.rs` | Shared TUI colors and styles |
 | `src/wifi/mod.rs` | Platform facade and compile-time backend selection |
 | `src/wifi/types.rs` | Shared `WifiInfo` and `ConnectionEvent` data types, plus network-list merge/sort helpers shared by all backends |
 | `src/wifi/connection.rs` | Windows connect, disconnect, connected-SSID, and network-list operations |
+| `src/wifi/ethernet.rs` | Windows Ethernet status via IP helper |
 | `src/wifi/profile.rs` | Windows profile XML, saved profiles, passwords, auto-connect, and forget operations |
 | `src/wifi/scanning.rs` | Windows scan trigger |
 | `src/wifi/listener.rs` | Windows WLAN notification listener |
@@ -88,6 +90,8 @@ The normal runtime flow is:
 | `src/wifi/linux_network_manager.rs` | NetworkManager system-D-Bus adapter and conversion helpers |
 | `src/wifi/linux_iwd.rs` | iwd system-D-Bus adapter, conversion helpers, and temporary credential agent |
 | `src/wifi/linux_listener.rs` | Long-lived Linux D-Bus signal worker and shutdown guard |
+| `src/wifi/linux_ethernet.rs` | Linux Ethernet status via Netlink |
+| `src/wifi/linux_netlink.rs` | Netlink helpers shared by the Linux Ethernet check |
 | `src/wifi/unsupported.rs` | Same placeholder contract for other unsupported targets |
 | `dist-workspace.toml` | cargo-dist release targets and installer configuration |
 | `wix/main.wxs` | WiX installer template for Windows |
@@ -98,7 +102,7 @@ The normal runtime flow is:
 
 | Target | Backend | `is_backend_available()` |
 | --- | --- | --- |
-| Windows | `connection`, `handle`, `listener`, `profile`, `scanning` | `true` |
+| Windows | `connection`, `ethernet`, `handle`, `listener`, `profile`, `scanning` | `true` |
 | Linux | runtime NetworkManager or iwd adapter | `true` after successful initialization |
 | Other non-Windows targets | `unsupported` placeholder | `false` |
 
@@ -114,7 +118,7 @@ get_wifi_networks          get_connected_ssid       scan_networks
 connect_profile            connect_open             connect_with_password
 disconnect                 disconnect_and_wait      get_saved_profiles
 get_wifi_password          set_auto_connect         forget_network
-start_wifi_listener        WifiListener
+get_ethernet_status        start_wifi_listener      WifiListener
 ```
 
 When adding or replacing a backend, preserve these signatures and return `WifiError` values through `WifiResult`. Add target-specific dependencies under a Cargo target dependency table; do not make Windows-only crates normal Linux dependencies.
@@ -122,7 +126,7 @@ When adding or replacing a backend, preserve these signatures and return `WifiEr
 ## State and error handling
 
 - `NetworkState` owns the discovered list, filtered list, and connected SSID.
-- `UiState` owns selection-independent display state, popups, loading animation, and `error_message`.
+- `UiState` owns selection-independent display state, popups, loading animation, and the `error_message`/`notice_message` toasts.
 - `ConnectionState` owns connection tasks, the listener, and connection events.
 - `RefreshState` owns refresh timing, background refresh channels, burst refreshes, and startup loading state.
 

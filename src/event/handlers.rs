@@ -8,6 +8,7 @@ use color_eyre::eyre::eyre;
 use crossterm::event::{self, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use secrecy::{ExposeSecret, SecretString};
 use std::io::Write;
+use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 use tokio::sync::mpsc;
 
@@ -29,10 +30,22 @@ const MANUAL_SECURITY_OPTIONS: [&str; 5] = [
     "WEP",
 ];
 
+/// Long-lived clipboard context. arboard warns on stderr when a Clipboard is
+/// dropped immediately after writing, which would splatter across the TUI,
+/// so the context is created once and kept for the life of the process.
+static CLIPBOARD: LazyLock<Mutex<Option<arboard::Clipboard>>> = LazyLock::new(|| Mutex::new(None));
+
 /// Copy text to the system clipboard.
 fn copy_to_clipboard(text: &str) -> std::result::Result<(), String> {
-    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    clipboard.set_text(text).map_err(|e| e.to_string())
+    let mut guard = CLIPBOARD.lock().map_err(|e| e.to_string())?;
+    if guard.is_none() {
+        *guard = Some(arboard::Clipboard::new().map_err(|e| e.to_string())?);
+    }
+    guard
+        .as_mut()
+        .expect("clipboard context created above")
+        .set_text(text)
+        .map_err(|e| e.to_string())
 }
 
 /// Handle keyboard events for the QR code popup
@@ -867,6 +880,7 @@ pub fn reset_pointer_shape() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wifi::WifiInfo;
 
     #[test]
     fn qr_supports_personal_security_types_only() {
@@ -883,6 +897,58 @@ mod tests {
             escape_special_chars(r#"a;b,c:d"e\f"#),
             r#"a\;b\,c\:d\"e\\f"#
         );
+    }
+
+    #[test]
+    fn qr_copy_without_password_reports_error() {
+        use crossterm::event::{KeyEventKind, KeyEventState};
+        let key = |code: event::KeyCode| KeyEvent {
+            code,
+            modifiers: KeyModifiers::empty(),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::empty(),
+        };
+        let mut state = AppState::new(vec![], false, true);
+        state.ui.show_qr_popup = true;
+        state.ui.qr_password = None;
+        handle_qr_popup(key(event::KeyCode::Char('y')), &mut state);
+        assert_eq!(
+            state.ui.error_message.as_deref(),
+            Some("No readable password for this network")
+        );
+    }
+
+    #[test]
+    fn main_copy_reports_result_and_stays_alive() {
+        use crossterm::event::{KeyEventKind, KeyEventState};
+        let key = |code: event::KeyCode| KeyEvent {
+            code,
+            modifiers: KeyModifiers::empty(),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::empty(),
+        };
+        let mut state = AppState::new(
+            vec![WifiInfo {
+                ssid: "Guest".to_string(),
+                ..Default::default()
+            }],
+            false,
+            true,
+        );
+        state.update_filtered_list();
+        state.ui.l_state.select(Some(0));
+        handle_main_view(key(event::KeyCode::Char('y')), &mut state);
+        // Headless environments lack a clipboard; either outcome proves the
+        // handler ran without panicking and reported back through a toast.
+        let copied =
+            state.ui.notice_message.as_deref() == Some("Copied SSID \"Guest\" to clipboard");
+        let failed = state
+            .ui
+            .error_message
+            .as_deref()
+            .is_some_and(|message| message.starts_with("Could not copy SSID"));
+        assert!(copied || failed);
+        assert!(!state.ui.show_qr_popup);
     }
 }
 
