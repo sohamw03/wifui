@@ -2,7 +2,9 @@
 import argparse
 import hashlib
 import json
+import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -29,14 +31,21 @@ WINGET_ISSUE_URL_PATTERN = re.compile(
 WINGET_PR_URL_PATTERN = re.compile(
     rf"https://github\.com/{re.escape(WINGET_REPOSITORY)}/pull/\d+"
 )
+WINGET_FORK_REPOSITORY = "sohamw03/winget-pkgs"
+
+
+def running_label():
+    if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+        return "Running:"
+    return "\033[1;36mRunning:\033[0m"
 
 
 def run_command(command, cwd=PROJECT_ROOT, capture_output=False):
     """Run a release command and stop if it fails."""
-    print(f"Running: {' '.join(command)}")
+    print(f"{running_label()} {shlex.join(command)}")
     options = {"check": True, "cwd": cwd}
     if capture_output:
-        options.update(capture_output=True, text=True)
+        options.update(capture_output=True, text=True, encoding="utf-8", errors="replace")
     try:
         return subprocess.run(command, **options)
     except FileNotFoundError:
@@ -47,8 +56,60 @@ def run_command(command, cwd=PROJECT_ROOT, capture_output=False):
             output = error.stderr or error.stdout
             if output:
                 print(output.rstrip())
-        print(f"Command failed with exit code {error.returncode}: {' '.join(command)}")
+        print(f"Command failed with exit code {error.returncode}: {shlex.join(command)}")
         sys.exit(error.returncode or 1)
+
+
+def is_windows_admin():
+    """Return True when the current process is elevated on Windows."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
+def run_choco_command(args, cwd=CHOCOLATEY_DIR):
+    """Run a choco command, requesting UAC elevation when not elevated."""
+    if sys.platform != "win32" or is_windows_admin():
+        return run_command(["choco", *args], cwd=cwd)
+    quoted = ",".join(f"'{arg.replace(chr(39), chr(39) * 2)}'" for arg in args)
+    ps_command = (
+        f"$p = Start-Process -FilePath 'choco' -ArgumentList {quoted} "
+        f"-Verb RunAs -WorkingDirectory '{cwd}' -Wait -PassThru; "
+        "exit $p.ExitCode"
+    )
+    return run_command(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            ps_command,
+        ],
+        cwd=cwd,
+    )
+
+
+def sync_winget_fork():
+    """Force-sync the winget-pkgs fork with upstream before wingetcreate."""
+    print(f"Syncing fork {WINGET_FORK_REPOSITORY} with {WINGET_REPOSITORY}...")
+    try:
+        subprocess.run(
+            ["gh", "repo", "sync", WINGET_FORK_REPOSITORY, "--force"],
+            check=True,
+            cwd=PROJECT_ROOT,
+        )
+    except FileNotFoundError:
+        print("Warning: `gh` not found, skipping fork sync.")
+    except subprocess.CalledProcessError as error:
+        print(f"Warning: fork sync failed with exit code {error.returncode}.")
+        if not confirm("Fork sync failed, continue anyway? (y/N): "):
+            sys.exit(error.returncode or 1)
 
 
 def get_cargo_version():
@@ -262,16 +323,15 @@ def publish_choco(version=None):
     package_path = select_chocolatey_package(version)
     package_name = package_path.name
 
-    print("\nManual Chocolatey validation (run these from choco/wifui):")
+    print("\nManual Chocolatey validation (run these from choco/wifui in an elevated terminal):")
     print("  choco install wifui --source .")
     print("  choco uninstall wifui")
     if not confirm("Have install and uninstall both succeeded? (y/N): "):
         print("Chocolatey package was created but not pushed.")
         return
 
-    run_command(
+    run_choco_command(
         [
-            "choco",
             "push",
             f".\\{package_name}",
             "--source",
@@ -280,6 +340,47 @@ def publish_choco(version=None):
         cwd=CHOCOLATEY_DIR,
     )
     print(f"Pushed {package_name} to Chocolatey.")
+
+
+def find_existing_winget_issue(version):
+    """Return the URL of an open Package-Update issue for this version, if any."""
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "issue",
+                "list",
+                "--repo",
+                WINGET_REPOSITORY,
+                "--label",
+                "Package-Update",
+                "--state",
+                "open",
+                "--limit",
+                "20",
+                "--json",
+                "url,title,body",
+            ],
+            check=False,
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        issues = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return None
+    for issue in issues:
+        body = issue.get("body") or ""
+        if WINGET_PACKAGE_ID in body and version in body:
+            return issue.get("url")
+    return None
 
 
 def publish_winget(version=None):
@@ -299,33 +400,40 @@ def publish_winget(version=None):
     )
 
     print("Creating the WinGet package-update issue...")
-    issue_result = run_command(
-        [
-            "gh",
-            "issue",
-            "create",
-            "--repo",
-            WINGET_REPOSITORY,
-            "--title",
-            WINGET_ISSUE_TITLE,
-            "--label",
-            "Package-Update",
-            "--body",
-            issue_body,
-        ],
-        capture_output=True,
-    )
-    issue_output = "\n".join(
-        output for output in (issue_result.stdout, issue_result.stderr) if output
-    )
-    issue_match = WINGET_ISSUE_URL_PATTERN.search(issue_output)
-    if not issue_match:
-        print("Error: GitHub CLI did not return a WinGet issue URL.")
-        if issue_output.strip():
-            print(issue_output.rstrip())
-        sys.exit(1)
-    issue_url = issue_match.group(0)
-    print(f"WinGet issue: {issue_url}")
+    existing_issue_url = find_existing_winget_issue(version)
+    if existing_issue_url:
+        print(f"Reusing existing WinGet issue: {existing_issue_url}")
+        issue_url = existing_issue_url
+    else:
+        issue_result = run_command(
+            [
+                "gh",
+                "issue",
+                "create",
+                "--repo",
+                WINGET_REPOSITORY,
+                "--title",
+                WINGET_ISSUE_TITLE,
+                "--label",
+                "Package-Update",
+                "--body",
+                issue_body,
+            ],
+            capture_output=True,
+        )
+        issue_output = "\n".join(
+            output for output in (issue_result.stdout, issue_result.stderr) if output
+        )
+        issue_match = WINGET_ISSUE_URL_PATTERN.search(issue_output)
+        if not issue_match:
+            print("Error: GitHub CLI did not return a WinGet issue URL.")
+            if issue_output.strip():
+                print(issue_output.rstrip())
+            sys.exit(1)
+        issue_url = issue_match.group(0)
+        print(f"WinGet issue: {issue_url}")
+
+    sync_winget_fork()
 
     run_command(
         [
@@ -398,11 +506,12 @@ def main():
 
 def run_full_release():
     """Run the interactive release handoff in publishing order."""
-    cargo_version = publish_crates_io()
     wait_for_manual_step(
         "Update the application images/GIF as needed and save the changes."
     )
     wait_for_manual_step("Update README.md with the release changes as needed.")
+
+    cargo_version = publish_crates_io()
 
     version = prompt_release_version(cargo_version)
     print(
