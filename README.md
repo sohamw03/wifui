@@ -12,7 +12,7 @@
 
 **WiF**u**i** is a blazing fast, lightweight Terminal User Interface (TUI) for managing Wi-Fi connections on **Windows and Linux**. Built with Rust and `ratatui`, it offers a keyboard-centric way to scan, connect, share, and monitor your network status without leaving the terminal.
 
-Linux support is experimental and uses the system D-Bus through NetworkManager or iwd. NetworkManager is preferred by default; use `--backend iwd` when iwd is the intended manager. Linux currently targets the first usable Wi-Fi interface. NetworkManager can read saved secrets for secured QR sharing; iwd does not expose stored passphrases through its public D-Bus API.
+Linux uses the system D-Bus through NetworkManager or iwd. It currently targets the first usable Wi-Fi interface. NetworkManager is preferred by default.
 
 ## 🚀 Features
 
@@ -29,8 +29,8 @@ Linux support is experimental and uses the system D-Bus through NetworkManager o
 | ![Home](images/home.png) | ![Search](images/addnetwork.png) |
 | Password | Search |
 | ![Password](images/password.png) | ![Search](images/search.png) |
-| Share |
-| ![Share](images/Share.png) |
+| Share | Quick Connect
+| ![Share](images/share.png) | ![qconn](images/qconn.png)
 
 ## 📦 Installation
 
@@ -87,7 +87,7 @@ wifui
 Quick-connect to a nearby saved network:
 
 ```sh
-wifui 204
+wifui 24
 ```
 
 ### Command Line Arguments
