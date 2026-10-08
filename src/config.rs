@@ -20,6 +20,7 @@ pub const BURST_REFRESH_INTERVAL_SECS: u64 = 1;
 pub const INTERACTION_COOLDOWN_SECS: u64 = 1;
 pub const EVENT_POLL_MS: u64 = 100;
 pub const MANUAL_REFRESH_DEBOUNCE_MS: u64 = 500;
+pub const STATUS_POLL_FRAMES: usize = 3;
 
 // Mouse
 pub const DOUBLE_CLICK_MS: u64 = 400;

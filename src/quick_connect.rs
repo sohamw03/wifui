@@ -121,9 +121,8 @@ pub fn run(search_term: &str, use_ascii_icons: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Saved fallbacks without scan metadata are out of range; attempting
-    // them just burns through the whole connection timeout. Cancelled or
-    // out of range: leave the pretty entry on screen as the whole message.
+    // Out-of-range fallbacks would burn the whole timeout with no chance
+    // of success, so leave the entry on screen instead of connecting.
     if let Some(selected) = selected.filter(|&index| !is_out_of_range(&rows[index])) {
         run_inline_operation(&mut terminal, &rows, selected, icon_set)?;
     } else {
@@ -153,12 +152,9 @@ fn exit_with_message(terminal: &mut DefaultTerminal, message: &str) -> Result<()
     Ok(())
 }
 
-/// Park the cursor on the fresh line directly below the last drawn row, so
-/// the shell prompt lands there. Forgetting can shrink the rows below the
-/// reserved viewport height; parking at the viewport bottom instead would
-/// leave the dead lines gaping between the content and the prompt. A single
-/// newline from a full viewport's last row scrolls only when already at the
-/// screen bottom; anything more leaves a blank hole.
+/// Park the cursor below the last drawn row so the prompt lands there.
+/// A shrunk viewport still reserves its original height, so only a full one
+/// needs the extra newline (which scrolls solely at the screen bottom).
 fn exit_below_rows(terminal: &mut DefaultTerminal, drawn: usize) -> Result<()> {
     let area = terminal.get_frame().area();
     let drawn = drawn.min(usize::from(area.height));
@@ -272,8 +268,7 @@ fn choose_profile(
                             return Ok(None);
                         }
                         selected = selected.min(rows.len() - 1);
-                        // Viewport keeps its original height; clear the dead
-                        // lines so the forgotten row doesn't ghost below.
+                        // Clear the dead lines so the forgotten row doesn't ghost.
                         terminal.clear()?;
                         draw_rows(terminal, rows, selected, icon_set, RowStatus::Normal, 0)?;
                     }
@@ -358,16 +353,15 @@ fn wait_for_operation(
     result_rx: Receiver<WifiResult<()>>,
 ) -> Result<WaitOutcome> {
     let deadline = Instant::now() + Duration::from_secs(config::CONNECTION_TIMEOUT_SECS);
-    let mut frame = 0;
+    let anim_start = Instant::now();
     draw_rows(
         terminal,
         rows,
         selected,
         icon_set,
         loading_status(operation, ssid),
-        frame,
+        spinner_frame(anim_start),
     )?;
-    frame = frame.wrapping_add(1);
 
     loop {
         if cancellation_requested()? {
@@ -378,10 +372,10 @@ fn wait_for_operation(
             Ok(Ok(())) => {
                 return match operation {
                     Operation::Connect => wait_until_connected(
-                        terminal, rows, selected, ssid, icon_set, deadline, &mut frame,
+                        terminal, rows, selected, ssid, icon_set, deadline, anim_start,
                     ),
                     Operation::Disconnect => wait_until_disconnected(
-                        terminal, rows, selected, ssid, icon_set, deadline, &mut frame,
+                        terminal, rows, selected, ssid, icon_set, deadline, anim_start,
                     ),
                 };
             }
@@ -398,14 +392,18 @@ fn wait_for_operation(
             selected,
             icon_set,
             loading_status(operation, ssid),
-            frame,
+            spinner_frame(anim_start),
         )?;
-        frame = frame.wrapping_add(1);
         if Instant::now() >= deadline {
             return Err(eyre!("Connection timed out (No response from OS)"));
         }
         thread::sleep(Duration::from_millis(config::EVENT_POLL_MS));
     }
+}
+
+/// Spinner position from wall-clock time so a slow pass never retards it.
+fn spinner_frame(started: Instant) -> usize {
+    (started.elapsed().as_millis() / u128::from(config::EVENT_POLL_MS)) as usize
 }
 
 fn cancellation_requested() -> Result<bool> {
@@ -449,20 +447,23 @@ fn wait_until_connected(
     ssid: &str,
     icon_set: IconSet,
     deadline: Instant,
-    frame: &mut usize,
+    anim_start: Instant,
 ) -> Result<WaitOutcome> {
+    let mut tick = 0;
     loop {
         if cancellation_requested()? {
             return Ok(WaitOutcome::Cancelled);
         }
 
-        if get_connected_ssid()
-            .map_err(|error| eyre!(error.to_string()))?
-            .as_deref()
-            == Some(ssid)
+        if tick % config::STATUS_POLL_FRAMES == 0
+            && get_connected_ssid()
+                .map_err(|error| eyre!(error.to_string()))?
+                .as_deref()
+                == Some(ssid)
         {
             return Ok(WaitOutcome::Completed);
         }
+        tick = tick.wrapping_add(1);
 
         draw_rows(
             terminal,
@@ -470,9 +471,8 @@ fn wait_until_connected(
             selected,
             icon_set,
             RowStatus::Connecting(ssid),
-            *frame,
+            spinner_frame(anim_start),
         )?;
-        *frame = (*frame).wrapping_add(1);
         if Instant::now() >= deadline {
             return Err(eyre!("Connection timed out (No response from OS)"));
         }
@@ -487,20 +487,23 @@ fn wait_until_disconnected(
     ssid: &str,
     icon_set: IconSet,
     deadline: Instant,
-    frame: &mut usize,
+    anim_start: Instant,
 ) -> Result<WaitOutcome> {
+    let mut tick = 0;
     loop {
         if cancellation_requested()? {
             return Ok(WaitOutcome::Cancelled);
         }
 
-        if get_connected_ssid()
-            .map_err(|error| eyre!(error.to_string()))?
-            .as_deref()
-            != Some(ssid)
+        if tick % config::STATUS_POLL_FRAMES == 0
+            && get_connected_ssid()
+                .map_err(|error| eyre!(error.to_string()))?
+                .as_deref()
+                != Some(ssid)
         {
             return Ok(WaitOutcome::Completed);
         }
+        tick = tick.wrapping_add(1);
 
         draw_rows(
             terminal,
@@ -508,9 +511,8 @@ fn wait_until_disconnected(
             selected,
             icon_set,
             RowStatus::Disconnecting(ssid),
-            *frame,
+            spinner_frame(anim_start),
         )?;
-        *frame = (*frame).wrapping_add(1);
         if Instant::now() >= deadline {
             return Err(eyre!("Disconnection timed out (No response from OS)"));
         }
