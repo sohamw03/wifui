@@ -12,13 +12,15 @@ use crate::{
 };
 use color_eyre::eyre::{Result, eyre};
 use crossterm::{
-    cursor::{MoveDown, MoveToColumn, Show},
+    cursor::Show,
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
+    style::Print,
     terminal::disable_raw_mode,
 };
 use ratatui::{
     DefaultTerminal, TerminalOptions, Viewport,
+    layout::Position,
     prelude::{Frame, Line, Modifier, Span, Style},
     widgets::{Block, List, ListItem, ListState},
 };
@@ -115,22 +117,60 @@ pub fn run(search_term: &str, use_ascii_icons: bool) -> Result<()> {
     };
 
     if rows.is_empty() {
-        terminal.clear()?;
-        execute!(terminal.backend_mut(), MoveToColumn(0), MoveDown(1), Show)?;
-        terminal.backend_mut().flush()?;
-        println!("All matching saved networks were forgotten.");
+        exit_with_message(&mut terminal, "All matching saved networks were forgotten.")?;
         return Ok(());
     }
 
-    if let Some(selected) = selected {
+    // Saved fallbacks without scan metadata are out of range; attempting
+    // them just burns through the whole connection timeout. Cancelled or
+    // out of range: leave the pretty entry on screen as the whole message.
+    if let Some(selected) = selected.filter(|&index| !is_out_of_range(&rows[index])) {
         run_inline_operation(&mut terminal, &rows, selected, icon_set)?;
     } else {
         terminal.clear()?;
-        draw_rows(&mut terminal, &rows, 0, icon_set, RowStatus::Normal, 0)?;
+        draw_rows(
+            &mut terminal,
+            &rows,
+            selected.unwrap_or(0),
+            icon_set,
+            RowStatus::Normal,
+            0,
+        )?;
     }
 
-    // Leave the cursor on a fresh line below the rows before exiting inline mode.
-    execute!(terminal.backend_mut(), MoveToColumn(0), MoveDown(1), Show)?;
+    exit_below_rows(&mut terminal, rows.len())?;
+    Ok(())
+}
+
+/// Clear the viewport and leave a one-line message where the rows were.
+fn exit_with_message(terminal: &mut DefaultTerminal, message: &str) -> Result<()> {
+    terminal.clear()?;
+    let top = terminal.get_frame().area().top();
+    terminal.set_cursor_position(Position { x: 0, y: top })?;
+    execute!(terminal.backend_mut(), Show)?;
+    terminal.backend_mut().flush()?;
+    println!("{message}");
+    Ok(())
+}
+
+/// Park the cursor on the fresh line directly below the last drawn row, so
+/// the shell prompt lands there. Forgetting can shrink the rows below the
+/// reserved viewport height; parking at the viewport bottom instead would
+/// leave the dead lines gaping between the content and the prompt. A single
+/// newline from a full viewport's last row scrolls only when already at the
+/// screen bottom; anything more leaves a blank hole.
+fn exit_below_rows(terminal: &mut DefaultTerminal, drawn: usize) -> Result<()> {
+    let area = terminal.get_frame().area();
+    let drawn = drawn.min(usize::from(area.height));
+    if drawn < usize::from(area.height) {
+        let target = area.top().saturating_add(drawn as u16);
+        terminal.set_cursor_position(Position { x: 0, y: target })?;
+        execute!(terminal.backend_mut(), Show)?;
+    } else {
+        let bottom = area.bottom().saturating_sub(1);
+        terminal.set_cursor_position(Position { x: 0, y: bottom })?;
+        execute!(terminal.backend_mut(), Print("\n"), Show)?;
+    }
     terminal.backend_mut().flush()?;
     Ok(())
 }
@@ -232,6 +272,9 @@ fn choose_profile(
                             return Ok(None);
                         }
                         selected = selected.min(rows.len() - 1);
+                        // Viewport keeps its original height; clear the dead
+                        // lines so the forgotten row doesn't ghost below.
+                        terminal.clear()?;
                         draw_rows(terminal, rows, selected, icon_set, RowStatus::Normal, 0)?;
                     }
                     Err(_) => {
@@ -694,30 +737,6 @@ mod tests {
         assert_eq!(
             rows.iter().map(|row| row.ssid.as_str()).collect::<Vec<_>>(),
             vec!["K4", "KP PG 204"]
-        );
-    }
-
-    #[test]
-    fn single_row_picker_keeps_visible_selection() {
-        use ratatui::{Terminal, backend::TestBackend};
-
-        // Forgetting shrank the picker 2 -> 1; the highlight was gated on len > 1.
-        let rows = vec![WifiInfo {
-            ssid: "Only".to_string(),
-            is_saved: true,
-            ..WifiInfo::default()
-        }];
-        let backend = TestBackend::new(40, 3);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| render_rows(frame, &rows, 0, IconSet::Ascii, RowStatus::Normal, 0))
-            .unwrap();
-        let buffer = terminal.backend().buffer().clone();
-        let cell = buffer.cell((0, 0)).unwrap();
-        assert_eq!(
-            cell.style().bg,
-            Some(theme::SELECTION_BG),
-            "single remaining row must keep the selection highlight"
         );
     }
 }

@@ -18,6 +18,8 @@ pub struct LayoutAreas {
     pub list_area: Rect,
     /// Outer area of the error panel, if visible
     pub error_area: Option<Rect>,
+    /// Bounding box of the saved-only toggle on the network list border
+    pub saved_toggle_area: Option<Rect>,
     /// Outer area of the notice panel, if visible
     pub notice_area: Option<Rect>,
     /// Outer area of the password popup, if visible
@@ -643,26 +645,31 @@ fn render_network_list(
         Line::from(Span::styled(" Networks ", list_title_style))
     };
 
+    let indicator_style = if !is_dimmed && state.ui.show_saved_only {
+        Style::default()
+            .fg(theme::GREEN)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        list_title_style
+    };
+    let indicator = Line::from(Span::styled(
+        format!(" {} {} ", icons.tab(), icons.saved().trim_end()),
+        indicator_style,
+    ));
+    let indicator_width = indicator.width() as u16;
+    areas.saved_toggle_area = Some(Rect::new(
+        (list_area.x + list_area.width).saturating_sub(indicator_width + 1),
+        list_area.y,
+        indicator_width,
+        1,
+    ));
+
     let list = List::new(list_items)
         .block(
             Block::default()
                 .title(networks_title)
                 .title_style(list_title_style)
-                .title_top(
-                    Line::from(Span::styled(
-                        format!(" {} {} ", icons.tab(), icons.saved().trim_end()),
-                        if is_dimmed {
-                            list_title_style
-                        } else if state.ui.show_saved_only {
-                            Style::default()
-                                .fg(theme::GREEN)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            list_title_style
-                        },
-                    ))
-                    .right_aligned(),
-                )
+                .title_top(indicator.right_aligned())
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(list_border_style),

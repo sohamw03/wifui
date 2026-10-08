@@ -327,13 +327,7 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
             state.ui.is_searching = true;
         }
         event::KeyCode::Tab => {
-            state.ui.show_saved_only = !state.ui.show_saved_only;
-            state.update_filtered_list();
-            if state.network.filtered_wifi_list.is_empty() {
-                state.ui.l_state.select(None);
-            } else {
-                state.ui.l_state.select(Some(0));
-            }
+            state.toggle_saved_only();
         }
         event::KeyCode::Char('n') => {
             state.ui.show_manual_add_popup = true;
@@ -798,6 +792,14 @@ pub fn handle_mouse(mouse: MouseEvent, state: &mut AppState, areas: &LayoutAreas
                 return;
             }
 
+            // --- Main view: click the saved-only toggle on the list border ---
+            if let Some(toggle) = areas.saved_toggle_area
+                && contains(toggle, col, row)
+            {
+                state.toggle_saved_only();
+                return;
+            }
+
             // --- Main view: click on a list item ---
             if let Some(clicked_idx) = row_under_cursor(col, row, state, areas) {
                 let is_double = state
@@ -858,6 +860,12 @@ fn desired_pointer(col: u16, row: u16, state: &AppState, areas: &LayoutAreas) ->
     }
     if state.is_popup_open() {
         return PointerShape::Arrow;
+    }
+    if areas
+        .saved_toggle_area
+        .is_some_and(|toggle| contains(toggle, col, row))
+    {
+        return PointerShape::Pointer;
     }
     if row_under_cursor(col, row, state, areas).is_some() {
         PointerShape::Pointer
@@ -969,6 +977,45 @@ mod tests {
         assert_eq!(state.ui.l_state.selected(), Some(0));
 
         handle_main_view(key(event::KeyCode::Tab), &mut state);
+        assert!(!state.ui.show_saved_only);
+        assert_eq!(state.network.filtered_wifi_list.len(), 2);
+    }
+
+    #[test]
+    fn main_click_on_saved_toggle_switches_saved_only() {
+        use crossterm::event::MouseEventKind;
+        use ratatui::layout::Rect;
+        let mut state = AppState::new(
+            vec![
+                WifiInfo {
+                    ssid: "Saved".to_string(),
+                    is_saved: true,
+                    ..Default::default()
+                },
+                WifiInfo {
+                    ssid: "Open".to_string(),
+                    ..Default::default()
+                },
+            ],
+            false,
+            true,
+        );
+        state.update_filtered_list();
+        let areas = LayoutAreas {
+            list_area: Rect::new(0, 0, 40, 10),
+            saved_toggle_area: Some(Rect::new(30, 0, 8, 1)),
+            ..Default::default()
+        };
+        let click = |column, row| MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        handle_mouse(click(32, 0), &mut state, &areas);
+        assert!(state.ui.show_saved_only);
+        assert_eq!(state.network.filtered_wifi_list.len(), 1);
+        handle_mouse(click(32, 0), &mut state, &areas);
         assert!(!state.ui.show_saved_only);
         assert_eq!(state.network.filtered_wifi_list.len(), 2);
     }

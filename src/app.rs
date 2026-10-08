@@ -363,6 +363,17 @@ impl AppState {
         false
     }
 
+    /// Toggle saved-only mode, refiltering and resetting selection to the top.
+    pub fn toggle_saved_only(&mut self) {
+        self.ui.show_saved_only = !self.ui.show_saved_only;
+        self.update_filtered_list();
+        if self.network.filtered_wifi_list.is_empty() {
+            self.ui.l_state.select(None);
+        } else {
+            self.ui.l_state.select(Some(0));
+        }
+    }
+
     pub fn update_filtered_list(&mut self) {
         let saved_only = self.ui.show_saved_only;
         let mut list: Vec<WifiInfo> = self
