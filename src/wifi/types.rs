@@ -18,6 +18,17 @@ pub struct WifiInfo {
 }
 
 impl WifiInfo {
+    /// Row for a saved profile absent from the latest scan (out of range).
+    /// Carries no radio metadata; actions resolve via the saved profile.
+    pub(crate) fn saved_fallback(ssid: String, is_connected: bool) -> Self {
+        Self {
+            ssid,
+            is_saved: true,
+            is_connected,
+            ..Self::default()
+        }
+    }
+
     /// Fold a second observation of the same network into this row.
     ///
     /// Radio metadata (signal, channel, frequency, PHY type, BSSID) is replaced only

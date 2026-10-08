@@ -6,8 +6,8 @@ use crate::{
     error::WifiResult,
     theme,
     wifi::{
-        WifiInfo, connect_profile, disconnect, disconnect_and_wait, get_connected_ssid,
-        get_saved_profiles, get_wifi_networks, scan_networks,
+        WifiInfo, connect_profile, disconnect, disconnect_and_wait, forget_network,
+        get_connected_ssid, get_saved_profiles, get_wifi_networks, scan_networks,
     },
 };
 use color_eyre::eyre::{Result, eyre};
@@ -67,11 +67,26 @@ impl Drop for InlineTerminalGuard {
 pub fn run(search_term: &str, use_ascii_icons: bool) -> Result<()> {
     let saved_profiles = get_saved_profiles()
         .map_err(|error| eyre!(format!("Could not read saved networks: {error}")))?;
-    scan_networks().map_err(|error| eyre!(format!("Could not scan current networks: {error}")))?;
+    // Best-effort scan: warn and continue with whatever metadata can be
+    // read; `connect_profile` works even when the target was not scanned.
+    if let Err(error) = scan_networks() {
+        eprintln!("Warning: could not scan current networks: {error}");
+    }
     thread::sleep(Duration::from_millis(config::SCAN_DELAY_MS));
-    let network_metadata = get_wifi_networks()
-        .map_err(|error| eyre!(format!("Could not read current networks: {error}")))?;
-    let rows = matching_rows(search_term, saved_profiles, &network_metadata);
+    let network_metadata = match get_wifi_networks() {
+        Ok(networks) => networks,
+        Err(error) => {
+            eprintln!("Warning: could not read current networks: {error}");
+            Vec::new()
+        }
+    };
+    let connected_ssid = get_connected_ssid().ok().flatten();
+    let mut rows = matching_rows(
+        search_term,
+        saved_profiles,
+        &network_metadata,
+        connected_ssid.as_deref(),
+    );
 
     if rows.is_empty() {
         println!("No saved networks matched \"{search_term}\".");
@@ -94,10 +109,18 @@ pub fn run(search_term: &str, use_ascii_icons: bool) -> Result<()> {
         .map_err(|error| eyre!(format!("Could not hide terminal cursor: {error}")))?;
 
     let selected = if rows.len() > 1 {
-        choose_profile(&mut terminal, &rows, icon_set)?
+        choose_profile(&mut terminal, &mut rows, icon_set)?
     } else {
         Some(0)
     };
+
+    if rows.is_empty() {
+        terminal.clear()?;
+        execute!(terminal.backend_mut(), MoveToColumn(0), MoveDown(1), Show)?;
+        terminal.backend_mut().flush()?;
+        println!("All matching saved networks were forgotten.");
+        return Ok(());
+    }
 
     if let Some(selected) = selected {
         run_inline_operation(&mut terminal, &rows, selected, icon_set)?;
@@ -116,30 +139,43 @@ fn matching_rows(
     search_term: &str,
     saved_profiles: Vec<String>,
     network_metadata: &[WifiInfo],
+    connected_ssid: Option<&str>,
 ) -> Vec<WifiInfo> {
     let mut seen = HashSet::new();
+    let query_lower = search_term.to_lowercase();
 
-    saved_profiles
+    let mut scored: Vec<(WifiInfo, bool)> = saved_profiles
         .into_iter()
         .filter_map(|ssid| {
             if !AppState::matches_search(&ssid, search_term) || !seen.insert(ssid.clone()) {
                 return None;
             }
 
-            let mut row = network_metadata
-                .iter()
-                .find(|network| network.ssid == ssid)
-                .cloned()?;
-            row.ssid = ssid;
-            row.is_saved = true;
-            Some(row)
+            // Exact substrings rank before subsequence-only hits.
+            let exact = ssid.to_lowercase().contains(&query_lower);
+            // Attempt saved profiles the scan missed (out of range or stale).
+            let is_connected = connected_ssid.is_some_and(|current| current == ssid.as_str());
+            let row = match network_metadata.iter().find(|network| network.ssid == ssid) {
+                Some(network) => {
+                    let mut row = network.clone();
+                    row.ssid = ssid;
+                    row.is_saved = true;
+                    row.is_connected |= is_connected;
+                    row
+                }
+                None => WifiInfo::saved_fallback(ssid, is_connected),
+            };
+            Some((row, exact))
         })
-        .collect()
+        .collect();
+    // Stable: exact hits keep saved order first, fuzzy hits follow.
+    scored.sort_by_key(|(_, exact)| !*exact);
+    scored.into_iter().map(|(row, _)| row).collect()
 }
 
 fn choose_profile(
     terminal: &mut DefaultTerminal,
-    rows: &[WifiInfo],
+    rows: &mut Vec<WifiInfo>,
     icon_set: IconSet,
 ) -> Result<Option<usize>> {
     let mut selected = 0;
@@ -184,6 +220,31 @@ fn choose_profile(
             KeyCode::Char('G') | KeyCode::End => {
                 selected = rows.len() - 1;
                 draw_rows(terminal, rows, selected, icon_set, RowStatus::Normal, 0)?;
+            }
+            // Forget the selected saved network and drop it from the picker,
+            // mirroring the TUI `f` key.
+            KeyCode::Char('f') | KeyCode::Delete => {
+                let ssid = rows[selected].ssid.clone();
+                match forget_network(&ssid) {
+                    Ok(()) => {
+                        rows.remove(selected);
+                        if rows.is_empty() {
+                            return Ok(None);
+                        }
+                        selected = selected.min(rows.len() - 1);
+                        draw_rows(terminal, rows, selected, icon_set, RowStatus::Normal, 0)?;
+                    }
+                    Err(_) => {
+                        draw_rows(
+                            terminal,
+                            rows,
+                            selected,
+                            icon_set,
+                            RowStatus::Failed(&ssid),
+                            0,
+                        )?;
+                    }
+                }
             }
             _ => {}
         }
@@ -426,6 +487,16 @@ fn draw_rows(
     Ok(())
 }
 
+/// Saved rows without scan metadata (no BSSID/channel/frequency/signal) are
+/// either out of range or the scan has not observed them yet.
+fn is_out_of_range(network: &WifiInfo) -> bool {
+    !network.is_connected
+        && network.signal == 0
+        && network.channel == 0
+        && network.frequency == 0
+        && network.bssid.is_none()
+}
+
 fn render_rows(
     frame: &mut Frame,
     rows: &[WifiInfo],
@@ -508,6 +579,8 @@ fn render_rows(
                 spans.push(Span::styled(" disconnecting...", row_style));
             } else if is_failed {
                 spans.push(Span::styled(" failed", row_style));
+            } else if is_out_of_range(network) {
+                spans.push(Span::styled(" (not in range)", row_style));
             } else if network.is_saved {
                 let auto_icon = if network.auto_connect {
                     icon_set.auto_on()
@@ -523,14 +596,15 @@ fn render_rows(
 
     let mut list_state = ListState::default();
     list_state.select(Some(selected.min(rows.len().saturating_sub(1))));
-    let mut list = List::new(items).highlight_symbol(icon_set.highlight());
-    if rows.len() > 1 {
-        list = list.highlight_style(
+    // The selection highlight must stay visible even when forgetting shrinks
+    // the picker to a single row; the Nerd highlight symbol alone is blank.
+    let list = List::new(items)
+        .highlight_symbol(icon_set.highlight())
+        .highlight_style(
             Style::default()
                 .add_modifier(Modifier::BOLD)
                 .bg(theme::SELECTION_BG),
         );
-    }
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
@@ -543,32 +617,107 @@ mod tests {
             ssid: ssid.to_string(),
             is_saved: true,
             is_connected,
+            signal: 80,
+            channel: 6,
+            frequency: 2_437_000,
+            bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
             ..WifiInfo::default()
         }
     }
 
     #[test]
-    fn matching_rows_excludes_saved_profiles_not_in_current_scan() {
+    fn matching_rows_includes_saved_profiles_not_in_current_scan() {
         let rows = matching_rows(
             "204",
             vec!["Current 204".to_string(), "Stale 204".to_string()],
             &[discovered("Current 204", false)],
+            None,
         );
 
         assert_eq!(
             rows.iter().map(|row| row.ssid.as_str()).collect::<Vec<_>>(),
-            vec!["Current 204"]
+            vec!["Current 204", "Stale 204"]
         );
+        let stale = &rows[1];
+        assert!(stale.is_saved);
+        assert!(!stale.is_connected);
+        assert!(is_out_of_range(stale));
+        assert!(!is_out_of_range(&rows[0]));
     }
 
     #[test]
-    fn matching_rows_rejects_non_contiguous_terms() {
+    fn matching_rows_marks_connected_fallback_row() {
+        let rows = matching_rows("204", vec!["Stale 204".to_string()], &[], Some("Stale 204"));
+
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].is_saved);
+        assert!(rows[0].is_connected);
+        assert!(!is_out_of_range(&rows[0]));
+    }
+
+    #[test]
+    fn matching_rows_matches_subsequence_terms() {
         let rows = matching_rows(
             "hme2",
             vec!["Home 204".to_string()],
             &[discovered("Home 204", false)],
+            None,
+        );
+
+        assert_eq!(
+            rows.iter().map(|row| row.ssid.as_str()).collect::<Vec<_>>(),
+            vec!["Home 204"]
+        );
+    }
+
+    #[test]
+    fn matching_rows_rejects_out_of_order_terms() {
+        let rows = matching_rows(
+            "2emh",
+            vec!["Home 204".to_string()],
+            &[discovered("Home 204", false)],
+            None,
         );
 
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn matching_rows_ranks_exact_hits_before_subsequence() {
+        let rows = matching_rows(
+            "k4",
+            vec!["KP PG 204".to_string(), "K4".to_string()],
+            &[],
+            None,
+        );
+
+        assert_eq!(
+            rows.iter().map(|row| row.ssid.as_str()).collect::<Vec<_>>(),
+            vec!["K4", "KP PG 204"]
+        );
+    }
+
+    #[test]
+    fn single_row_picker_keeps_visible_selection() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        // Forgetting shrank the picker 2 -> 1; the highlight was gated on len > 1.
+        let rows = vec![WifiInfo {
+            ssid: "Only".to_string(),
+            is_saved: true,
+            ..WifiInfo::default()
+        }];
+        let backend = TestBackend::new(40, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_rows(frame, &rows, 0, IconSet::Ascii, RowStatus::Normal, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let cell = buffer.cell((0, 0)).unwrap();
+        assert_eq!(
+            cell.style().bg,
+            Some(theme::SELECTION_BG),
+            "single remaining row must keep the selection highlight"
+        );
     }
 }

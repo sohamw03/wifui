@@ -97,7 +97,7 @@ wifui 24
 | `--ascii` | Use ASCII icons (no Nerd Fonts required) |
 | `--show-keys` | Show key logger for debugging |
 | `--backend auto\|nm\|iwd` | Select the Linux D-Bus backend (default: `auto`) |
-| `SEARCH_TERM` | Quick-connect to a nearby saved network |
+| `SEARCH_TERM` | Quick-connect to a saved network |
 | `-v`, `--version` | Print version information |
 
 ### Keybindings
@@ -115,6 +115,7 @@ wifui 24
 | `a` | Toggle Auto Connect |
 | `s` | Share WiFi (QR Code) |
 | `/` | Search Networks |
+| `Tab` | Toggle Saved-Only View |
 | `q` / `Ctrl + c` | Quit |
 | `Esc` | Back / Clear Search / Quit |
 

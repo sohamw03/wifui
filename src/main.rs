@@ -16,8 +16,8 @@ use crate::{
     app::AppState,
     event::run,
     wifi::{
-        backend_unavailable_message, get_connected_ssid, get_wifi_networks, is_backend_available,
-        scan_networks,
+        backend_unavailable_message, get_connected_ssid, get_saved_profiles, get_wifi_networks,
+        is_backend_available, scan_networks,
     },
 };
 
@@ -102,7 +102,8 @@ async fn main() -> Result<()> {
                 scan_networks()?;
                 let networks = get_wifi_networks()?;
                 let connected = get_connected_ssid()?;
-                Ok((networks, connected))
+                let saved = get_saved_profiles().unwrap_or_default();
+                Ok((networks, connected, saved))
             })
             .await;
             let result = match result {

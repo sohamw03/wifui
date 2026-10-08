@@ -45,6 +45,7 @@ pub mod icons {
         pub const HIGHLIGHT: &str = "  "; // Two spaces for alignment
         // UI symbols for help bar and popups
         pub const ENTER: &str = "󰌑"; // nf-md-keyboard_return
+        pub const TAB: &str = "⇥"; // tab key symbol
         pub const TAB_NEXT: &str = "⇥ / ↓";
         pub const TAB_PREV: &str = "⇤ / ↑";
         pub const SPACE: &str = "󱁐"; // nf-md-keyboard_space
@@ -67,6 +68,7 @@ pub mod icons {
         pub const HIGHLIGHT: &str = "> ";
         // UI symbols for help bar and popups
         pub const ENTER: &str = "Enter";
+        pub const TAB: &str = "Tab";
         pub const TAB_NEXT: &str = "Tab/Down";
         pub const TAB_PREV: &str = "S-Tab/Up";
         pub const SPACE: &str = "Space";
@@ -148,6 +150,13 @@ impl IconSet {
         match self {
             IconSet::Nerd => icons::nerd::ENTER,
             IconSet::Ascii => icons::ascii::ENTER,
+        }
+    }
+
+    pub fn tab(&self) -> &'static str {
+        match self {
+            IconSet::Nerd => icons::nerd::TAB,
+            IconSet::Ascii => icons::ascii::TAB,
         }
     }
 

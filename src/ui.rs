@@ -648,6 +648,21 @@ fn render_network_list(
             Block::default()
                 .title(networks_title)
                 .title_style(list_title_style)
+                .title_top(
+                    Line::from(Span::styled(
+                        format!(" {} {} ", icons.tab(), icons.saved().trim_end()),
+                        if is_dimmed {
+                            list_title_style
+                        } else if state.ui.show_saved_only {
+                            Style::default()
+                                .fg(theme::GREEN)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            list_title_style
+                        },
+                    ))
+                    .right_aligned(),
+                )
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(list_border_style),
@@ -960,7 +975,9 @@ fn render_help_bar(frame: &mut Frame, help_area: Rect, state: &AppState) {
                 Span::styled("f", Style::default().fg(theme::FOREGROUND)),
                 Span::styled(" forget • ", Style::default().fg(theme::DIMMED)),
                 Span::styled("r", Style::default().fg(theme::FOREGROUND)),
-                Span::styled(" refresh", Style::default().fg(theme::DIMMED)),
+                Span::styled(" refresh • ", Style::default().fg(theme::DIMMED)),
+                Span::styled(icons.tab(), Style::default().fg(theme::FOREGROUND)),
+                Span::styled(" saved", Style::default().fg(theme::DIMMED)),
             ]),
             Line::from(vec![
                 Span::styled("a", Style::default().fg(theme::FOREGROUND)),

@@ -11,7 +11,7 @@ use crate::{
     ui::{LayoutAreas, render},
     wifi::{
         ConnectionEvent, EthernetStatus, get_connected_ssid, get_ethernet_status,
-        get_wifi_networks, is_backend_available, start_wifi_listener,
+        get_saved_profiles, get_wifi_networks, is_backend_available, start_wifi_listener,
     },
 };
 use color_eyre::eyre::{Result, eyre};
@@ -42,7 +42,8 @@ fn start_network_refresh(state: &mut AppState) {
         let result = tokio::task::spawn_blocking(|| {
             let networks = get_wifi_networks()?;
             let connected = get_connected_ssid()?;
-            Ok((networks, connected))
+            let saved = get_saved_profiles().unwrap_or_default();
+            Ok((networks, connected, saved))
         })
         .await;
         let result = match result {
@@ -186,8 +187,8 @@ pub async fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<
             && let Ok(result) = rx.try_recv()
         {
             match result {
-                Ok((new_list, connected_ssid)) => {
-                    state.apply_network_update(new_list, connected_ssid);
+                Ok((new_list, connected_ssid, saved_profiles)) => {
+                    state.apply_network_update(new_list, connected_ssid, saved_profiles);
                 }
                 Err(e) => {
                     state.ui.error_message = Some(format!("Failed to refresh networks: {e}"));

@@ -3,7 +3,7 @@ use crate::app::{AppState, PointerShape};
 use crate::config;
 use crate::error::WifiError;
 use crate::ui::LayoutAreas;
-use crate::wifi::{disconnect, get_connected_ssid, get_wifi_networks};
+use crate::wifi::{disconnect, get_connected_ssid, get_saved_profiles, get_wifi_networks};
 use color_eyre::eyre::eyre;
 use crossterm::event::{self, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use secrecy::{ExposeSecret, SecretString};
@@ -326,6 +326,15 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
         event::KeyCode::Char('/') => {
             state.ui.is_searching = true;
         }
+        event::KeyCode::Tab => {
+            state.ui.show_saved_only = !state.ui.show_saved_only;
+            state.update_filtered_list();
+            if state.network.filtered_wifi_list.is_empty() {
+                state.ui.l_state.select(None);
+            } else {
+                state.ui.l_state.select(Some(0));
+            }
+        }
         event::KeyCode::Char('n') => {
             state.ui.show_manual_add_popup = true;
             state.inputs.manual_input_field = 0;
@@ -374,7 +383,8 @@ pub fn handle_main_view(key: KeyEvent, state: &mut AppState) -> bool {
                     std::thread::sleep(Duration::from_millis(config::SCAN_DELAY_MS));
                     let networks = get_wifi_networks()?;
                     let connected = get_connected_ssid()?;
-                    Ok((networks, connected))
+                    let saved = get_saved_profiles().unwrap_or_default();
+                    Ok((networks, connected, saved))
                 })
                 .await;
                 let result = match result {
@@ -916,6 +926,51 @@ mod tests {
             state.ui.error_message.as_deref(),
             Some("No readable password for this network")
         );
+    }
+
+    #[test]
+    fn main_tab_toggles_saved_only_and_resets_selection() {
+        use crossterm::event::{KeyEventKind, KeyEventState};
+        let key = |code: event::KeyCode| KeyEvent {
+            code,
+            modifiers: KeyModifiers::empty(),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::empty(),
+        };
+        let mut state = AppState::new(
+            vec![
+                WifiInfo {
+                    ssid: "Saved".to_string(),
+                    is_saved: true,
+                    ..Default::default()
+                },
+                WifiInfo {
+                    ssid: "Open".to_string(),
+                    ..Default::default()
+                },
+            ],
+            false,
+            true,
+        );
+        state.update_filtered_list();
+        state.ui.l_state.select(Some(1));
+
+        handle_main_view(key(event::KeyCode::Tab), &mut state);
+        assert!(state.ui.show_saved_only);
+        assert_eq!(
+            state
+                .network
+                .filtered_wifi_list
+                .iter()
+                .map(|w| w.ssid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Saved"]
+        );
+        assert_eq!(state.ui.l_state.selected(), Some(0));
+
+        handle_main_view(key(event::KeyCode::Tab), &mut state);
+        assert!(!state.ui.show_saved_only);
+        assert_eq!(state.network.filtered_wifi_list.len(), 2);
     }
 
     #[test]

@@ -17,6 +17,9 @@ pub struct NetworkState {
     pub filtered_wifi_list: Vec<WifiInfo>,
     pub connected_ssid: Option<String>,
     pub ethernet_status: EthernetStatus,
+    /// All saved profile SSIDs, including ones absent from the latest scan.
+    /// Refreshed alongside `wifi_list`; drives saved-only mode.
+    pub saved_profiles: Vec<String>,
 }
 
 impl NetworkState {
@@ -26,6 +29,7 @@ impl NetworkState {
             wifi_list,
             connected_ssid: None,
             ethernet_status: EthernetStatus::Inactive,
+            saved_profiles: Vec::new(),
         }
     }
 }
@@ -35,6 +39,8 @@ impl NetworkState {
 pub struct UiState {
     pub l_state: ListState,
     pub is_searching: bool,
+    /// When true, the network list shows saved profiles only (toggled with Tab).
+    pub show_saved_only: bool,
     pub show_password_popup: bool,
     pub show_manual_add_popup: bool,
     pub show_qr_popup: bool,
@@ -55,6 +61,7 @@ impl UiState {
         Self {
             l_state: ListState::default().with_selected(if has_networks { Some(0) } else { None }),
             is_searching: false,
+            show_saved_only: false,
             show_password_popup: false,
             show_manual_add_popup: false,
             show_qr_popup: false,
@@ -196,7 +203,7 @@ impl InputStates {
 }
 
 /// Payload sent back to the event loop when a background network refresh finishes.
-pub type NetworkUpdate = Result<(Vec<WifiInfo>, Option<String>)>;
+pub type NetworkUpdate = Result<(Vec<WifiInfo>, Option<String>, Vec<String>)>;
 pub type EthernetUpdate = WifiResult<EthernetStatus>;
 /// QR lines plus the readable password backing a secured-network QR, if any.
 pub type QrUpdate = Result<(Vec<String>, Option<SecretString>)>;
@@ -332,19 +339,55 @@ impl AppState {
         }
     }
 
-    /// Match a search term as a case-insensitive contiguous substring.
+    /// Match a search term case-insensitively: exact substrings first,
+    /// otherwise ordered subsequence (`k4` matches `KP PG 204`).
     pub(crate) fn matches_search(ssid: &str, query: &str) -> bool {
-        ssid.to_lowercase().contains(&query.to_lowercase())
+        if query.is_empty() {
+            return true;
+        }
+        let ssid_lower = ssid.to_lowercase();
+        let query_lower = query.to_lowercase();
+        if ssid_lower.contains(&query_lower) {
+            return true;
+        }
+        let mut wanted = query_lower.chars();
+        let mut next = wanted.next();
+        for got in ssid_lower.chars() {
+            if Some(got) == next {
+                next = wanted.next();
+                if next.is_none() {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn update_filtered_list(&mut self) {
-        self.network.filtered_wifi_list = self
+        let saved_only = self.ui.show_saved_only;
+        let mut list: Vec<WifiInfo> = self
             .network
             .wifi_list
             .iter()
-            .filter(|w| Self::matches_search(&w.ssid, &self.inputs.search_input.value))
+            .filter(|w| {
+                (!saved_only || w.is_saved)
+                    && Self::matches_search(&w.ssid, &self.inputs.search_input.value)
+            })
             .cloned()
             .collect();
+        if saved_only {
+            // Saved-only shows every saved profile, including ones the scan missed.
+            for ssid in self.network.saved_profiles.iter() {
+                if list.iter().any(|w| &w.ssid == ssid)
+                    || !Self::matches_search(ssid, &self.inputs.search_input.value)
+                {
+                    continue;
+                }
+                let is_connected = self.network.connected_ssid.as_deref() == Some(ssid.as_str());
+                list.push(WifiInfo::saved_fallback(ssid.clone(), is_connected));
+            }
+        }
+        self.network.filtered_wifi_list = list;
         if self.network.filtered_wifi_list.is_empty() {
             self.ui.l_state.select(None);
         } else if let Some(selected) = self.ui.l_state.selected()
@@ -370,6 +413,7 @@ impl AppState {
         &mut self,
         new_list: Vec<WifiInfo>,
         connected_ssid: Option<String>,
+        saved_profiles: Vec<String>,
     ) {
         let connection_changed = self.network.connected_ssid != connected_ssid;
 
@@ -383,6 +427,7 @@ impl AppState {
 
         self.network.wifi_list = new_list;
         self.network.connected_ssid = connected_ssid;
+        self.network.saved_profiles = saved_profiles;
         self.update_filtered_list();
 
         if connection_changed && self.network.connected_ssid.is_some() {
@@ -445,6 +490,7 @@ mod tests {
         state.apply_network_update(
             vec![wifi("a", None), wifi("b", Some("aa:bb")), wifi("c", None)],
             None,
+            vec![],
         );
 
         assert_eq!(state.ui.l_state.selected(), Some(1));
@@ -456,7 +502,11 @@ mod tests {
         state.ui.l_state.select(Some(1));
 
         // "b" roamed to a different access point and moved position.
-        state.apply_network_update(vec![wifi("b", Some("cc:dd")), wifi("a", None)], None);
+        state.apply_network_update(
+            vec![wifi("b", Some("cc:dd")), wifi("a", None)],
+            None,
+            vec![],
+        );
 
         assert_eq!(state.ui.l_state.selected(), Some(0));
     }
@@ -469,6 +519,7 @@ mod tests {
         state.apply_network_update(
             vec![wifi("a", None), wifi("b", None)],
             Some("a".to_string()),
+            vec![],
         );
 
         assert_eq!(state.ui.l_state.selected(), Some(0));
@@ -480,7 +531,7 @@ mod tests {
         let mut state = state_with(vec![wifi("a", None), wifi("b", None), wifi("c", None)]);
         state.ui.l_state.select(Some(2));
 
-        state.apply_network_update(vec![wifi("a", None), wifi("b", None)], None);
+        state.apply_network_update(vec![wifi("a", None), wifi("b", None)], None, vec![]);
 
         assert_eq!(state.ui.l_state.selected(), Some(0));
     }
@@ -489,7 +540,7 @@ mod tests {
     fn empty_wifi_list_clears_selection() {
         let mut state = state_with(vec![]);
 
-        state.apply_network_update(vec![], None);
+        state.apply_network_update(vec![], None, vec![]);
 
         assert_eq!(state.ui.l_state.selected(), None);
     }
@@ -498,7 +549,7 @@ mod tests {
     fn no_previous_selection_selects_first_row() {
         let mut state = state_with(vec![wifi("a", None)]);
 
-        state.apply_network_update(vec![wifi("a", None), wifi("b", None)], None);
+        state.apply_network_update(vec![wifi("a", None), wifi("b", None)], None, vec![]);
 
         assert_eq!(state.ui.l_state.selected(), Some(0));
         assert_eq!(state.network.wifi_list.len(), 2);
@@ -507,8 +558,82 @@ mod tests {
     #[test]
     fn search_matches_case_insensitive_substrings() {
         assert!(AppState::matches_search("Home-204", "204"));
-        assert!(!AppState::matches_search("Home-204", "hme2"));
+        assert!(AppState::matches_search("Home-204", "hme2"));
+        assert!(AppState::matches_search("KP PG 204", "k4"));
         assert!(!AppState::matches_search("Home-204", "205"));
+        assert!(!AppState::matches_search("Home-204", "2emh"));
         assert!(AppState::matches_search("Home-204", ""));
+    }
+
+    #[test]
+    fn saved_only_filter_hides_unsaved_networks() {
+        let mut saved = wifi("saved", None);
+        saved.is_saved = true;
+        let mut state = state_with(vec![saved, wifi("open", None)]);
+        assert_eq!(state.network.filtered_wifi_list.len(), 2);
+
+        state.ui.show_saved_only = true;
+        state.update_filtered_list();
+
+        assert_eq!(
+            state
+                .network
+                .filtered_wifi_list
+                .iter()
+                .map(|w| w.ssid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["saved"]
+        );
+    }
+
+    #[test]
+    fn saved_only_filter_combines_with_search() {
+        let mut home = wifi("Home 204", None);
+        home.is_saved = true;
+        let mut work = wifi("Work 204", None);
+        work.is_saved = true;
+        let mut state = state_with(vec![home, work, wifi("Cafe", None)]);
+        state.inputs.search_input.value = "home".to_string();
+
+        state.ui.show_saved_only = true;
+        state.update_filtered_list();
+
+        assert_eq!(
+            state
+                .network
+                .filtered_wifi_list
+                .iter()
+                .map(|w| w.ssid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Home 204"]
+        );
+    }
+
+    #[test]
+    fn saved_only_mode_includes_out_of_range_saved_profiles() {
+        let mut near = wifi("Near", None);
+        near.is_saved = true;
+        let mut state = state_with(vec![near, wifi("Cafe", None)]);
+        state.ui.show_saved_only = true;
+        let mut near_in_scan = wifi("Near", None);
+        near_in_scan.is_saved = true;
+        state.apply_network_update(
+            vec![near_in_scan, wifi("Cafe", None)],
+            None,
+            vec!["Near".to_string(), "Far".to_string()],
+        );
+
+        assert_eq!(
+            state
+                .network
+                .filtered_wifi_list
+                .iter()
+                .map(|w| w.ssid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Near", "Far"]
+        );
+        let far = &state.network.filtered_wifi_list[1];
+        assert!(far.is_saved);
+        assert!(!far.is_connected);
     }
 }
